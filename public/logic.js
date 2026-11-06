@@ -90,6 +90,38 @@ export const WX_ICON = (sym = '') => /thunder/.test(sym) ? '⛈️' : /snow|slee
 // ---------- the planner
 // Walking weight per minute, relative to a minute in the queue. Tuned with sim/simulate.mjs (40 simulated days):
 // 'normal' gave the most fun (−13% walking vs. weight 1); 'low' walks ~20% less again for ~5% less fun.
+// Expected crowd over the day (0..1) as the planner assumes it: quiet first hour, peak early afternoon, a second
+// peak on Halloween evenings (research: rope-drop and late-evening waits are the lowest of the day).
+export function crowdCurve(min) {
+  const h = min / 60;
+  const afternoon = Math.exp(-((h - 14.5) ** 2) / 6);
+  const evening = 0.75 * Math.exp(-((h - 19.5) ** 2) / 3);
+  return Math.min(1, 0.15 + 0.85 * Math.max(afternoon, evening));
+}
+// "Short now, long later": favour a ride whose queue is short now compared with what it will probably be later today
+// (and avoid long queues at the peak). Tuned with sim/simulate.mjs on 4 crowd scenarios × 20 days, including days whose
+// real crowd curve differs from crowdCurve: urgency 4 gave +10–13% rides per person and ~40 min less queueing a day,
+// clearly more than simply weighting waits heavier (+3–6%). Stronger values gained a little more but made the
+// pregnant adult walk more and ride less on busy days. Needs ctx.clock = { now, close } in minutes since midnight
+// (park time); without it (or without a schedule) the factor is 1. waitWeight stays 1 (kept for experiments).
+export const TUNE = { urgency: 4, waitWeight: 1 };
+// park time in minutes since midnight, from /api/live (localTime is Brussels wall-clock written as UTC)
+export function parkClock(live, nowMs = Date.now()) {
+  if (!live?.localTime || live.minutesLeft == null) return null;
+  const d = new Date(live.localTime);
+  const now = d.getUTCHours() * 60 + d.getUTCMinutes() + Math.max(0, Math.round((nowMs - (live.t || nowMs)) / 60e3));
+  return { now, close: now + live.minutesLeft - Math.max(0, Math.round((nowMs - (live.t || nowMs)) / 60e3)) };
+}
+export function urgencyFactor(wait, ctx) {
+  const c = ctx.clock; if (!TUNE.urgency || !c || c.close == null) return 1;
+  const now = c.now, end = c.close;
+  if (end - now < 45) return 1;
+  let sum = 0, n = 0;
+  for (let t = now + 30; t <= end; t += 15) { sum += crowdCurve(t); n++; }
+  const later = (wait + 3) / Math.max(crowdCurve(now), 0.15) * (sum / n); // this ride's likely wait later today
+  const gain = Math.max(-0.5, Math.min(1.5, (later - wait) / (wait + 15)));
+  return 1 + TUNE.urgency * gain;
+}
 export const WALK_WEIGHT = { normal: { heavy: 2, light: 1.2 }, low: { heavy: 6, light: 2 } };
 // ctx = { people, favs:[id], done:{id:n}, live, walk:(attraction)=>meters, minutesLeft, month, rain, walkPref }
 function scoreOne(group, a, ctx, extraWalkM = 0) {
@@ -110,8 +142,9 @@ function scoreOne(group, a, ctx, extraWalkM = 0) {
   // tuned with sim/simulate.mjs; walk is also slower with a pregnant adult
   const ww = WALK_WEIGHT[ctx.walkPref] || WALK_WEIGHT.normal;
   const heavy = group.some((p) => p.pregnant || isToddler(p));
-  const minutes = walkMin(walkM) * (group.some((p) => p.pregnant) ? 1.25 : 1) * (heavy ? ww.heavy : ww.light) + wait + a.ride;
+  const minutes = walkMin(walkM) * (group.some((p) => p.pregnant) ? 1.25 : 1) * (heavy ? ww.heavy : ww.light) + wait * TUNE.waitWeight + a.ride;
   if (ctx.minutesLeft != null && walkMin(walkM) + wait > ctx.minutesLeft) return null;
+  value *= urgencyFactor(wait, ctx);
   return { a, ride, watch, escorted, value, walkM, wait, waitKnown: st.wait != null, minutes };
 }
 
@@ -180,9 +213,11 @@ export function foodOptions(walk, { mealTime = false } = {}) {
   }).sort((a, b) => a.cost - b.cost);
 }
 
+const early = (d) => { const h = d.getHours() + d.getMinutes() / 60; return h < 12.25 || (h >= 17 && h < 17.75); };
 export function isMealTime(d) {
   const h = d.getHours() + d.getMinutes() / 60;
-  return (h >= 11.75 && h <= 13.75) || (h >= 17.5 && h <= 19.5);
+  // a little before the rush: eat while the restaurants are still quiet, then ride while everyone else eats
+  return (h >= 11.5 && h <= 13.5) || (h >= 17 && h <= 19);
 }
 
 // ---------- notifications (used by the Worker every minute, per device)
@@ -203,7 +238,7 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   const fresh = pos && now - pos.t < 45 * 60e3;
   const here = fresh ? pos : null;
   const walk = (x) => (here ? distM(here, x) * PATH_FACTOR : 400);
-  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk };
+  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk, clock: parkClock(live) };
   const since = (k) => now - (memo.sent[k] || 0);
   const quiet = since('any') < 8 * 60e3;
   const nm = (id) => byId[id]?.name || 'attractie';
@@ -253,7 +288,7 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
     if (memo.food !== slot + local.toDateString()) {
       memo.food = slot + local.toDateString();
       const f = foodOptions(walk, { mealTime: true })[0];
-      notes.push({ tag: 'food', title: `🍽️ Tijd voor ${slot === 'lunch' ? 'middageten' : 'avondeten'}?`, body: `${f.f.name}${f.f.seat ? ' (zitplaatsen)' : ''}${here ? ` op ${walkMin(f.walkM)} min` : ''}.`, url: '/?food=1' });
+      notes.push({ tag: 'food', title: `🍽️ Tijd voor ${slot === 'lunch' ? 'middageten' : 'avondeten'}?`, body: `${early(local) ? 'Eet nu, vóór de drukte: daarna zijn de rijen korter terwijl iedereen eet. ' : ''}${f.f.name}${f.f.seat ? ' (zitplaatsen)' : ''}${here ? ` op ${walkMin(f.walkM)} min` : ''}.`, url: '/?food=1' });
     }
   }
   // 4. rest for the pregnant adult

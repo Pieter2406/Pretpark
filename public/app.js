@@ -256,6 +256,7 @@ function recompute() {
   S.plans = S.live && !closed ? plans({
     people: people(), favs: S.fam.favs || [], done: S.fam.done || {}, live: S.live, walk: (a) => S.here.metres(a),
     month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null, rain: raining(S.live), walkPref: S.fam.walk,
+    clock: S.live.close ? { now: new Date().getHours() * 60 + new Date().getMinutes(), close: new Date().getHours() * 60 + new Date().getMinutes() + Math.round((S.live.close - Date.now()) / 60e3) } : null,
   }) : [];
 }
 const walkOf = (x) => (S.here ? S.here.metres(x) : distM(pos(), x) * 1.35);

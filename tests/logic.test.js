@@ -89,3 +89,14 @@ test('notifications: a favourite that gets short', () => {
   const r2 = decideNotifications({ fam, deviceId: 'd1234567890', live, now: now + 30 * 60e3, prefs: { best: false }, memo: r1.memo });
   assert.equal(r2.notes[0]?.tag, 'fav-' + k);
 });
+
+test('"short now, long later": morning queues get a bonus, peak-time queues a penalty', async () => {
+  const { urgencyFactor, parkClock } = await import('../public/logic.js');
+  const morning = { clock: { now: 10 * 60 + 15, close: 22 * 60 } }, peak = { clock: { now: 14 * 60 + 30, close: 22 * 60 } };
+  assert.ok(urgencyFactor(10, morning) > 1.5, 'a 10-minute queue at 10:15 is a bargain');
+  assert.ok(urgencyFactor(40, peak) < 1, 'a 40-minute queue at the peak is not');
+  assert.equal(urgencyFactor(10, {}), 1, 'no clock: no effect');
+  assert.equal(urgencyFactor(10, { clock: { now: 21 * 60 + 30, close: 22 * 60 } }), 1, 'last half hour: no effect');
+  const c = parkClock({ localTime: '2026-11-07T10:30:00Z', minutesLeft: 690, t: 0 }, 0);
+  assert.deepEqual(c, { now: 630, close: 1320 });
+});

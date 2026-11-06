@@ -71,6 +71,13 @@ No accounts; knowing the family id is the access.
   app and three baselines (nearest, shortest queue, random) and prints rides/fun/wait/km per person.
 - `tests/planner.fuzz.test.js` checks the rules on 600 random situations; `tests/simulation.test.js` runs 3 days.
 - `WALK_WEIGHT` in logic.js came from a sweep in the simulator; `fam.walk = 'low'` is the "Liever weinig stappen" setting.
+- "Short now, long later" (`TUNE.urgency = 4`, `urgencyFactor`, `crowdCurve` in logic.js): a ride's value is scaled by how
+  much shorter its queue is now than its likely queue later today (ctx.clock = park minutes; app.js and the cron via
+  `parkClock`). Sim (20 days × 4 scenarios incl. curves that differ from crowdCurve): +10–13% rides per person, ~40 min
+  less queueing; a plain heavier wait weight (control) gave only +3–6%. Cost: ~0.7 km more walking, pregnant adult
+  −0.6 rides. Tried and rejected: one-step lookahead, "queue until closing time" (no gain).
+- `sim/simulate.mjs` scenario options: crowd, rain, breakdowns, closed rides, `curve: 'default'|'early'|'flat'`.
+- Meal reminders fire a little before the rush (11:30–13:30, 17:00–19:00) with "eat now, ride while others eat".
 - The simulator's "plezier" uses the same enjoyment weights as the planner, so compare on rides per person, km and
   waits, not on "plezier" alone.
 

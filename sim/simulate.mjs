@@ -17,13 +17,18 @@ function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 10139
 // ---------- crowd model: every ride has a popularity; waits follow a day curve, with noise and breakdowns
 const POP = { thrill: 1, family: 0.65, kids: 0.3 };
 const BIG = new Set(['Kondaa', 'Pulsar', 'Calamity Mine', 'Loup-Garou', 'Vampire', 'Radja River', 'Tiki-Waka', 'Mecalodon']);
+// the real day can differ from what the planner expects: 'early' = lunchtime peak and no evening, 'flat' = busy all day
+let CURVE = 'default';
 function dayCurve(min) { // 0..1 crowd level over the day, peaks early afternoon and again for the Halloween evening
   const h = min / 60;
+  if (CURVE === 'early') return Math.min(1, 0.3 + 0.7 * Math.exp(-((h - 12.5) ** 2) / 5));
+  if (CURVE === 'flat') return Math.min(1, 0.55 + 0.25 * Math.exp(-((h - 15) ** 2) / 8));
   const afternoon = Math.exp(-((h - 14.5) ** 2) / 6);
   const evening = 0.75 * Math.exp(-((h - 19.5) ** 2) / 3);
   return Math.min(1, 0.15 + 0.85 * Math.max(afternoon, evening));
 }
-export function makeDay(seed, { crowd = 1, rainFrom = null, rainTo = null, breakdowns = 1, closed = [] } = {}) {
+export function makeDay(seed, { crowd = 1, rainFrom = null, rainTo = null, breakdowns = 1, closed = [], curve = 'default' } = {}) {
+  CURVE = curve;
   const r = rng(seed);
   const base = Object.fromEntries(ATTRACTIONS.map((a) => [a.id, (BIG.has(a.name) ? 55 : 30) * POP[a.cat] * (0.7 + 0.6 * r())]));
   const downs = []; // [rideId, from, to]
@@ -59,7 +64,7 @@ const open = (live, a) => live.rides[a.id]?.s === 'OPERATING';
 export const STRATEGIES = {
   app: ({ people, live, here, done, favs, min, walkPref }) => {
     const h = park.fromHere(here);
-    return plans({ people, favs, done, live, walk: (a) => h.metres(a), walkPref, month: MONTH, minutesLeft: CLOSE - min, rain: live.weather.now.mm > 0 })[0] || null;
+    return plans({ people, favs, done, live, walk: (a) => h.metres(a), walkPref, month: MONTH, minutesLeft: CLOSE - min, rain: live.weather.now.mm > 0, clock: { now: min, close: CLOSE } })[0] || null;
   },
   // what many families do: the nearest open ride where at least two of us can ride, not done yet
   nearest: ({ people, live, here, done }) => {
@@ -90,7 +95,7 @@ export function simulateDay(strategy, { seed = 1, people = DEFAULT_PEOPLE, favs 
   const done = {};
   let min = arrive, here = ENTRANCE, ate = { lunch: false, dinner: false }, lastPause = arrive;
   const walkFor = (from, to, slow) => { const d = pathLength(park.fromHere(from).path(to)); return { d, t: (d / 60) * (slow ? 1.25 : 1) }; };
-  while (min < CLOSE - 10) {
+  while (min < CLOSE - 3) {
     // meals and rest, the same for every strategy (the app's food button is not what is being compared)
     if ((!ate.lunch && min >= 12 * 60 + 30) || (!ate.dinner && min >= 18 * 60)) {
       const f = foodOptions((x) => park.fromHere(here).metres(x), { mealTime: true })[0].f;
@@ -128,6 +133,7 @@ export function simulateDay(strategy, { seed = 1, people = DEFAULT_PEOPLE, favs 
       const a = byId[part.id];
       const w = walkFor(here, a, slow);
       const arriveAt = min + w.t;
+      if (arriveAt > CLOSE) { m.late = (m.late || 0) + 1; longest = Math.max(longest, w.t); continue; } // queue already closed
       const wait = day.live(Math.round(arriveAt)).rides[a.id]?.w ?? 10; // the queue when you actually get there
       const back = part === plan.parts[0] ? 0 : walkFor(a, meet, slow).t;
       const t = w.t + wait + a.ride + back;

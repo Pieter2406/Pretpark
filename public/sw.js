@@ -4,7 +4,7 @@
 // - Pages come from the cache too (instant start on weak park data); ?fresh=… forces the network, used to log in again.
 // - A new version installs in the background; the app shows "Nieuwe versie · Herladen".
 // - /api/* is never cached here: app.js keeps its own last copies (localStorage, IndexedDB).
-const VERSION = 'pretpark-926ce9ecb282';
+const VERSION = 'pretpark-06ea4e3d451c';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
   '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest',
