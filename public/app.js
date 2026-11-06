@@ -5,6 +5,7 @@ import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, 
 import { makePark, pathLength, bearingXY } from './route.js';
 import { apply, phoneOf } from './family.js';
 import { idb } from './idb.js';
+import { PHOTOS } from './photos.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -36,6 +37,10 @@ const person = (id) => people().find((p) => p.id === id);
 const emoji = (p) => (p?.pregnant ? '🤰' : p?.kind === 'adult' ? '🧑' : p?.height < 110 ? '👶' : '🧒');
 const pname = (p) => (p.id === meId() ? 'Jij' : p.name);
 const names = (ids) => ids.map((id) => person(id)).filter(Boolean).map(pname).join(' + ');
+const photoOf = (a) => (a && PHOTOS[a.name]) || null;
+const photoSrc = (a) => (photoOf(a) ? `/img/rides/${photoOf(a).fn}` : null);
+const credit = (a) => { const p = photoOf(a); return p ? `Foto: ${esc(p.artist || 'Wikimedia Commons')} · <a href="${esc(p.page)}" target="_blank" rel="noopener">${esc(p.license || 'licentie')}</a>` : ''; };
+const icon = (a, cls = 'thumb') => (photoSrc(a) ? `<img class="${cls}" src="${photoSrc(a)}" alt="" loading="lazy">` : `<span aria-hidden="true">${a.icon}</span>`);
 const hasToddler = () => people().some((p) => p.kind === 'child' && p.height < 110);
 
 // ---------- network
@@ -317,7 +322,7 @@ function ticket(plan, chosen) {
     const live = status(S.live, pt.id);
     const wait = num(live.wait ?? pt.wait);
     return `<article class="ticket" style="--notch: 62%">
-      <div class="what"><div class="icon" aria-hidden="true">${a.icon}</div><h2>${esc(a.name)}</h2>
+      <div class="what">${photoSrc(a) ? `<div class="t-photo"><img src="${photoSrc(a)}" alt="${esc(a.name)}"><span class="cr">${credit(a)}</span></div>` : `<div class="icon" aria-hidden="true">${a.icon}</div>`}<h2>${esc(a.name)}</h2>
         <div class="who">${(pt.ride || []).map((id) => chip(id)).join('')}${(pt.watch || []).map((id) => chip(id, true)).join('')}</div></div>
       <div class="how">
         <div class="stats"><div class="stat"><b>${live.open || !live.known ? wait + '′' : '—'}${trendIcon(a.id)}</b><span>${live.open || !live.known ? 'wachten' : 'nu dicht'}</span></div>
@@ -341,7 +346,7 @@ function ticket(plan, chosen) {
     }
     const a = byId[pt.id], live = status(S.live, pt.id);
     if (!a) return '';
-    return `<div class="half ${isMine ? 'mine' : ''}"><div class="who">${who}${done}</div><h3><span aria-hidden="true">${a.icon}</span> ${esc(a.name)}</h3>
+    return `<div class="half ${isMine ? 'mine' : ''}"><div class="who">${who}${done}</div><h3>${icon(a)} ${esc(a.name)}</h3>
       <div class="meta">⏱ <b>${num(live.wait ?? pt.wait)} min</b>${trendIcon(a.id)} wachten · 🚶 ${mins(walkOf(a))} stappen</div>
       ${notesHtml(notesFor(pt).filter(([i2]) => i2 !== '👀'))}</div>`;
   }).join('');
@@ -431,11 +436,11 @@ function renderNow() {
       const i = S.plans.indexOf(p);
       if (p.type === 'together') {
         const a = byId[p.parts[0].id];
-        return `<button class="alt" data-go="choose:${i}"><span class="ic" aria-hidden="true">${a.icon}</span>
+        return `<button class="alt" data-go="choose:${i}"><span class="ic">${icon(a)}</span>
           <span><span class="t">${esc(a.name)}</span><span class="s">Iedereen samen · ${mins(walkOf(a))} stappen</span></span>${waitBadge(a.id)}</button>`;
       }
       const [x, y] = p.parts; const a = byId[x.id];
-      return `<button class="alt" data-go="choose:${i}"><span class="ic" aria-hidden="true">${a.icon}</span>
+      return `<button class="alt" data-go="choose:${i}"><span class="ic">${icon(a)}</span>
         <span><span class="t">${esc(a.name)} <span class="muted">+ ${y.rest ? 'rust' : esc(byId[y.id]?.name)}</span></span>
         <span class="s">Splitsen · ${x.group.map((id) => emoji(person(id))).join('')} / ${y.group.map((id) => emoji(person(id))).join('')}</span></span>${waitBadge(a.id)}</button>`;
     }).join('') + '</div>';
@@ -462,13 +467,13 @@ function renderList() {
   el.innerHTML = `<div class="filters" role="group" aria-label="Filter">${fb('us', 'Voor ons')}${fb('small', '👶 Peuter')}${fb('thrill', '🎢 Spanning')}${fb('fav', '⭐ Favorieten')}${fb('all', 'Alles')}</div>
     <div class="list">${rows.map(({ a, st, can: c, walk }) => `
       <div class="ride ${st.open ? '' : 'off'}">
-        <button class="open" data-ride="${a.id}"><span style="font-size:1.6rem" aria-hidden="true">${a.icon}</span>
+        <button class="open" data-ride="${a.id}">${photoSrc(a) ? icon(a) : `<span style="font-size:1.6rem;width:48px;text-align:center" aria-hidden="true">${a.icon}</span>`}
           <span><span class="name">${esc(a.name)}</span><span class="sub">${mins(walk)} stappen${S.fam.done?.[a.id] ? ` · ✓ ${S.fam.done[a.id]}× gedaan` : ''}</span>
           <span class="dots" aria-label="${esc(ps.map((p, i) => `${p.name}: ${c[i] === 'alone' ? 'mag' : c[i] === 'adult' ? 'met volwassene' : 'mag niet'}`).join(', '))}">${ps.map((p, i) => `<span class="dot ${c[i] === 'alone' ? '' : c[i] === 'adult' ? 'adult' : 'no'}" aria-hidden="true">${emoji(p)}</span>`).join('')}</span></span></button>
         ${waitBadge(a.id)}
         <button class="star" data-fav="${a.id}" aria-pressed="${(S.fam.favs || []).includes(a.id)}" aria-label="Favoriet: ${esc(a.name)}">★</button>
       </div>`).join('') || '<p class="empty">Niets gevonden.</p>'}</div>
-    <p class="muted small" style="margin-top:14px">🟢 mag · 🟠 met volwassene · grijs mag niet. ↗↘ = rij groeit / krimpt. Lengtes volgens walibi.be; zwangerschap is een voorzichtige inschatting. Check altijd het bordje aan de ingang.</p>`;
+    <p class="muted small" style="margin-top:14px">🟢 mag · 🟠 met volwassene · doorstreept = mag niet. ↗↘ = rij groeit / krimpt. Lengtes volgens walibi.be; zwangerschap is een voorzichtige inschatting. Check altijd het bordje aan de ingang.</p>`;
 }
 
 // ---------- the big map: one SVG that is built once; pins and the view box change, the base layer never re-parses
@@ -478,9 +483,9 @@ function renderMapView() {
   if (!S.park) return;
   if (!el.querySelector('#mapShell')) {
     el.innerHTML = `<div class="seg mapseg" role="tablist"><button data-mapmode="map" role="tab">🗺️ Kaart</button><button data-mapmode="list" role="tab">📋 Lijst</button></div>
-      <div id="mapShell"><div class="map-tools"><button data-go="mapme">📍 Mij</button><button data-go="mappark">🗺️ Park</button><button data-go="place"></button></div>
-      <p class="legend">🟢 ≤10′ · 🟠 ≤25′ · 🔴 langer · ⚪ dicht · 🍽️ · 🚻 · <span style="color:var(--me)">●</span> jij · <span style="color:var(--plum)">●</span> partner</p>
-      <div class="mapwrap mapview" id="bigmap"></div></div>
+      <div id="mapShell" class="mapbox"><div class="mapwrap mapview" id="bigmap"></div>
+        <div class="map-tools ov"><button data-go="mapme" aria-label="Rond mij">📍</button><button data-go="mappark" aria-label="Heel het park">🗺️</button><button data-go="place"></button></div>
+        <p class="legend ov"><span class="lg" style="--c:var(--ok)">≤10′</span><span class="lg" style="--c:#e08a00">≤25′</span><span class="lg" style="--c:var(--bad)">langer</span><span>⚪ dicht</span></p></div>
       <div id="listPane"></div>`;
     if (!MAP.init) { MAP.init = true; const h = S.park.toXY(pos()); if (!S.sim) { MAP.cx = h.x; MAP.cy = h.y; MAP.R = 190; } }
     MAP.svg = null;
@@ -489,11 +494,12 @@ function renderMapView() {
   $('#mapShell').hidden = S.mapMode !== 'map';
   $('#listPane').hidden = S.mapMode !== 'list';
   if (S.mapMode === 'list') { renderList(); return; }
-  const pb = el.querySelector('[data-go="place"]'); pb.textContent = S.placing ? 'Tik op de kaart…' : S.manual ? '🛰️ GPS' : '✋ Ik sta hier';
+  const pb = el.querySelector('[data-go="place"]'); pb.textContent = S.placing ? 'Tik waar je staat…' : S.manual ? '🛰️' : '✋'; pb.setAttribute('aria-label', S.placing ? 'Tik op de kaart waar je staat' : S.manual ? 'GPS gebruiken' : 'Ik sta hier'); pb.classList.toggle('wide', S.placing);
   pb.dataset.go = S.manual && !S.placing ? 'gps' : 'place';
   const box = $('#bigmap');
   if (!MAP.svg || !box.contains(MAP.svg)) {
     box.innerHTML = `<svg viewBox="0 0 10 10" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Kaart van het park">
+      <defs><clipPath id="pc"><circle r="13"/></clipPath></defs>
       <rect x="-2000" y="-2000" width="4000" height="4000" fill="var(--map-green)"/>${baseLayer()}<g id="pins"></g></svg>`;
     MAP.svg = box.querySelector('svg');
     mapGestures(box);
@@ -501,43 +507,73 @@ function renderMapView() {
   drawPins();
 }
 function setMapView() { MAP.svg?.setAttribute('viewBox', `${MAP.cx - MAP.R} ${MAP.cy - MAP.R} ${2 * MAP.R} ${2 * MAP.R}`); }
+const waitCol = (st) => (!st.open ? 'var(--muted)' : st.wait == null || num(st.wait) <= 10 ? 'var(--ok)' : num(st.wait) <= 25 ? '#e08a00' : 'var(--bad)');
+let lakeAt = null;
 function drawPins() {
   if (!MAP.svg) return;
   setMapView();
-  const k = MAP.R / 180;
+  const zoomedOut = MAP.R > 300;
+  const k = MAP.R / 180 * (zoomedOut ? 0.72 : 1); // pins a bit smaller when the whole park is in view
   const ps = people();
-  const pins = [], labels = [];
-  // labels: open rides we can do first, skip any that would overlap one already placed
+  const pins = [], labels = [], under = [];
+  const target = S.fam?.target?.plan ? new Set(S.fam.target.plan.parts.filter((p) => !p.rest).map((p) => p.id)) : new Set();
+  // big, readable pins for open rides someone in the family can do; small grey dots for the rest
   const rides = ATTRACTIONS.map((a) => ({ a, st: status(S.live, a.id), xy: S.park.toXY(a), can: ps.some((p) => canRide(p, a)) }))
-    .sort((x, y) => (y.st.open && y.can) - (x.st.open && x.can));
+    .map((r) => ({ ...r, big: r.st.open && r.can }))
+    .sort((x, y) => (x.big - y.big) || (target.has(x.a.id) - target.has(y.a.id))); // big ones drawn last = on top
   const placed = [];
-  for (const { a, st, xy, can } of rides) {
-    const w = num(st.wait);
-    const col = !st.open ? null : st.wait == null || w <= 10 ? 'var(--ok)' : w <= 25 ? '#e08a00' : 'var(--bad)';
-    const big = st.open && can;
-    pins.push(`<g class="pin" data-ride="${a.id}" role="button" tabindex="0" aria-label="${esc(a.name)}, ${st.open ? (st.wait != null ? w + ' minuten' : 'open') : 'dicht'}" transform="translate(${xy.x} ${xy.y}) scale(${k})">
-      ${big ? `<circle r="11" fill="${col}" stroke="var(--surface)" stroke-width="2.5"/><text y="4" text-anchor="middle" font-size="11" fill="#fff" font-weight="700">${st.wait != null ? w : '•'}</text>`
-        : `<circle r="${st.open ? 6 : 4.5}" fill="${st.open ? col : 'var(--surface)'}" stroke="var(--muted)" stroke-width="1.5" opacity="${can ? 1 : 0.6}"/>`}</g>`);
-    if (big || MAP.R < 220) {
-      const lw = a.name.length * 5.4 * k, lh = 11 * k, ly = xy.y + (big ? 23 : 15) * k;
-      const box2 = [xy.x - lw / 2, ly - lh, xy.x + lw / 2, ly + 2 * k];
-      if (!placed.some((b) => box2[0] < b[2] && box2[2] > b[0] && box2[1] < b[3] && box2[3] > b[1])) {
-        placed.push(box2);
-        labels.push(`<text class="lbl" x="${xy.x}" y="${ly}" text-anchor="middle" font-size="${(big ? 9 : 7.5) * k}" stroke-width="${3 * k}">${esc(a.name)}</text>`);
-      }
+  // pins count as taken space, so labels never sit on top of an icon
+  for (const { xy, big } of rides) { const r = (big ? 17 : 8) * k; placed.push([xy.x - r, xy.y - r, xy.x + r, xy.y + (big ? 27 : 8) * k]); }
+  const tryLabel = (x, y, text, size, cls = 'lbl') => {
+    const lw = text.length * size * 0.58, lh = size * 1.15;
+    const b = [x - lw / 2, y - lh, x + lw / 2, y + size * 0.3];
+    if (placed.some((q) => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1])) return false;
+    placed.push(b);
+    labels.push(`<text class="${cls}" x="${x}" y="${y}" text-anchor="middle" font-size="${size}" stroke-width="${size / 3}">${esc(text)}</text>`);
+    return true;
+  };
+  for (const { a, st, xy, big } of rides) {
+    const col = waitCol(st), w = num(st.wait);
+    const label = `${esc(a.name)}, ${st.open ? (st.wait != null ? w + ' minuten' : 'open') : st.s === 'DOWN' ? 'storing' : 'dicht'}`;
+    if (!big) {
+      pins.push(`<g class="pin" data-ride="${a.id}" role="button" tabindex="0" aria-label="${label}" transform="translate(${xy.x} ${xy.y}) scale(${k})" opacity=".75">
+        <circle r="7.5" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/><text y="3.2" text-anchor="middle" font-size="8.5" opacity=".65">${a.icon}</text></g>`);
+      continue;
     }
+    const src = MAP.R < 260 ? photoSrc(a) : null;
+    const tg = target.has(a.id);
+    if (tg) under.push(`<circle class="pulse" cx="${xy.x}" cy="${xy.y}" r="${26 * k}" fill="var(--accent)" opacity=".25"/>`);
+    pins.push(`<g class="pin" data-ride="${a.id}" role="button" tabindex="0" aria-label="${label}" transform="translate(${xy.x} ${xy.y}) scale(${k})">
+      <circle r="16" fill="var(--surface)" stroke="${tg ? 'var(--accent)' : col}" stroke-width="${tg ? 5 : 4}"/>
+      ${src ? `<image href="${src}" x="-13" y="-13" width="26" height="26" preserveAspectRatio="xMidYMid slice" clip-path="url(#pc)"/>` : `<text y="6" text-anchor="middle" font-size="16">${a.icon}</text>`}
+      <g transform="translate(0 19)"><rect x="-14" y="-7.5" width="28" height="15" rx="7.5" fill="${col}" stroke="var(--surface)" stroke-width="1.5"/>
+      <text y="4" text-anchor="middle" font-size="10" font-weight="800" fill="#fff">${st.wait != null ? w + '′' : 'open'}</text></g></g>`);
   }
-  for (const f of FOOD) { const xy = S.park.toXY(f); pins.push(`<g class="pin" data-food="${f.id}" role="button" tabindex="0" aria-label="${esc(f.name)}" transform="translate(${xy.x} ${xy.y}) scale(${k})"><text y="4" text-anchor="middle" font-size="10">🍽️</text></g>`); }
-  S.park.toilets.forEach((t, i) => { const xy = S.park.toXY(t); pins.push(`<g class="pin" data-wc="wc${i}" role="button" tabindex="0" aria-label="Toilet" transform="translate(${xy.x} ${xy.y}) scale(${k})"><text y="5" text-anchor="middle" font-size="12">🚻</text></g>`); });
+  // labels after pins, big rides first so they win the space
+  for (const { a, xy, big } of [...rides].sort((x, y) => y.big - x.big)) {
+    if (big) tryLabel(xy.x, xy.y + 41 * k, a.name, 10 * k) || tryLabel(xy.x, xy.y - 21 * k, a.name, 10 * k); // below, else above
+    else if (MAP.R < 140) tryLabel(xy.x, xy.y + 19 * k, a.name, 7 * k, "lbl small");
+  }
+  if (MAP.R < 220) for (const f of FOOD) { const xy = S.park.toXY(f); pins.push(`<g class="pin" data-food="${f.id}" role="button" tabindex="0" aria-label="Eten: ${esc(f.name)}" transform="translate(${xy.x} ${xy.y}) scale(${k})"><circle r="8" fill="var(--surface)" stroke="var(--line)"/><text y="3.5" text-anchor="middle" font-size="9">🍴</text></g>`); }
+  S.park.toilets.forEach((t, i) => { const xy = S.park.toXY(t); pins.push(`<g class="pin" data-wc="wc${i}" role="button" tabindex="0" aria-label="Toilet" transform="translate(${xy.x} ${xy.y}) scale(${k})"><rect x="-9" y="-9" width="18" height="18" rx="5" fill="#2f6fd6"/><text y="4.5" text-anchor="middle" font-size="11">🚻</text></g>`); });
+  // landmarks help you find your bearings: the entrance, the big lake, the playground, your car
+  const ent = S.park.toXY(ENTRANCE);
+  pins.push(`<g transform="translate(${ent.x} ${ent.y}) scale(${k})"><rect x="-11" y="-11" width="22" height="22" rx="6" fill="var(--plum)"/><text y="5" text-anchor="middle" font-size="13">🚪</text></g>`);
+  tryLabel(ent.x, ent.y + 24 * k, 'Ingang / uitgang', 9 * k, 'lbl land');
+  if (!lakeAt) { const w = [...S.park.data.water].sort((x, y) => y.length - x.length)[0]; let sx = 0, sy = 0; for (let i = 0; i < w.length; i += 2) { sx += w[i]; sy += w[i + 1]; } lakeAt = { x: sx / (w.length / 2), y: sy / (w.length / 2) }; }
+  if (MAP.R < 450) tryLabel(lakeAt.x, lakeAt.y, 'Het meer', 12 * k, 'lbl water');
+  for (const p of S.park.play || []) { const xy = S.park.toXY(p); pins.push(`<g transform="translate(${xy.x} ${xy.y}) scale(${k})"><circle r="9" fill="var(--sun)"/><text y="4" text-anchor="middle" font-size="10">🛝</text></g>`); }
+  if (S.fam?.car) { const xy = S.park.toXY(S.fam.car); pins.push(`<g transform="translate(${xy.x} ${xy.y}) scale(${k})"><circle r="11" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/><text y="4.5" text-anchor="middle" font-size="12">🚗</text></g>`); }
   // the partner's phone, if it reported in the last 15 minutes
   for (const [dev, p] of Object.entries(S.fam?.positions || {})) {
     if (dev === device || Date.now() - p.t > 15 * 60e3) continue;
     const who = person(S.fam.me?.[dev]); const xy = S.park.toXY(p);
-    pins.push(`<g transform="translate(${xy.x} ${xy.y}) scale(${k})"><circle r="9" fill="var(--plum)" stroke="#fff" stroke-width="3"/><text class="lbl" y="-14" text-anchor="middle" font-size="9">${esc(who?.name || 'partner')}</text></g>`);
+    pins.push(`<g transform="translate(${xy.x} ${xy.y}) scale(${k})"><circle r="10" fill="var(--plum)" stroke="#fff" stroke-width="3"/><text y="4" text-anchor="middle" font-size="9" fill="#fff" font-weight="800">${esc((who?.name || 'P')[0])}</text></g>`);
+    tryLabel(xy.x, xy.y - 16 * k, who?.name || 'partner', 9 * k);
   }
   const me = S.park.toXY(pos());
-  pins.push(`<g transform="translate(${me.x} ${me.y}) scale(${k})"><circle r="16" fill="var(--me)" opacity=".18"/><circle r="8" fill="var(--me)" stroke="#fff" stroke-width="3"/>${S.heading != null ? `<path d="M0 -22 L6 -12 L-6 -12 Z" fill="var(--me)" transform="rotate(${S.heading})"/>` : ''}</g>`);
-  MAP.svg.querySelector('#pins').innerHTML = pins.join('') + labels.join('');
+  pins.push(`<g transform="translate(${me.x} ${me.y}) scale(${k})"><circle r="18" fill="var(--me)" opacity=".18"/><circle r="9" fill="var(--me)" stroke="#fff" stroke-width="3"/>${S.heading != null ? `<path d="M0 -25 L7 -13 L-7 -13 Z" fill="var(--me)" transform="rotate(${S.heading})"/>` : ''}</g>`);
+  MAP.svg.querySelector('#pins').innerHTML = under.join('') + pins.join('') + labels.join('');
 }
 // drag to pan, pinch or wheel to zoom; a tap places your position in "Ik sta hier" mode
 function mapGestures(box) {
@@ -727,14 +763,17 @@ function updateGuide(full) {
   const { g, dist, arrived } = c;
   const el = $('#guide');
   const hasHeading = S.heading != null;
-  if (full || !el.querySelector('.head') || el.dataset.arrived !== String(arrived) || el.dataset.id !== g.id || el.dataset.heading !== String(hasHeading)) {
-    el.dataset.arrived = String(arrived); el.dataset.id = g.id; el.dataset.heading = String(hasHeading);
+  const near = dist < 250;
+  if (full || !el.querySelector('.head') || el.dataset.arrived !== String(arrived) || el.dataset.id !== g.id || el.dataset.heading !== String(hasHeading) || el.dataset.near !== String(near)) {
+    el.dataset.arrived = String(arrived); el.dataset.id = g.id; el.dataset.heading = String(hasHeading); el.dataset.near = String(near);
     const doneBtn = g.kind === 'ride' ? '<button class="primary big" data-go="done">✓ Gedaan</button>'
       : g.kind === 'ride-solo' ? `<button class="primary big" data-doneone="${g.id}">✓ Gedaan</button>`
       : g.kind === 'food' ? '<button class="primary big" data-go="ate">🍽️ We hebben gegeten</button>'
       : '<button class="primary big" data-go="guideclose">👍 Ik ben er</button>';
     const st = g.kind === 'ride' || g.kind === 'ride-solo' ? status(S.live, g.id) : null;
-    el.innerHTML = `<div class="head"><span class="ic" aria-hidden="true">${g.icon}</span><h2 id="guideTitle">${esc(g.name)}</h2>
+    const ga = byId[g.id];
+    const gphoto = ga && ga.cat ? photoSrc(ga) : null;
+    el.innerHTML = `<div class="head">${gphoto ? `<img class="gthumb" src="${gphoto}" alt="">` : `<span class="ic" aria-hidden="true">${g.icon}</span>`}<h2 id="guideTitle">${esc(g.name)}</h2>
         ${st ? waitBadge(g.id) : ''}<button data-go="voice" aria-pressed="${S.voice}" aria-label="Gesproken aanwijzingen">${S.voice ? '🔊' : '🔈'}</button><button data-go="guideclose" aria-label="Sluiten">✕</button></div>
       ${arrived ? `<div class="arrived"><b>Je bent er! 🎉</b><span class="muted">${g.kind === 'ride' ? 'Veel plezier!' : g.kind === 'ride-solo' ? 'Veel plezier!' : g.kind === 'meet' ? 'Rust even, de anderen komen hierheen.' : ''}</span>
           ${g.kind === 'ride' && S.fam.target && !S.fam.target.queued ? '<button class="big" data-go="queue" style="margin-top:10px">⏳ We staan in de rij</button>' : ''}</div>`
@@ -744,6 +783,7 @@ function updateGuide(full) {
         ${hasHeading ? '' : `<button data-go="compass" style="margin-bottom:10px">🧭 Kompas aan: de pijl draait mee</button>`}`}
       ${S.sim ? `<p class="small muted">📍 ${S.sim === 'far' ? 'Je bent niet in het park: ik doe alsof je aan de ingang staat.' : S.sim === 'wait' ? 'GPS zoeken…' : 'Geen GPS: ik reken vanaf de ingang.'}</p>` : ''}
       ${hasToddler() && isDark() ? '<p class="small">🎃 Donker: blijf met de peuter op de brede hoofdpaden.</p>' : ''}
+      ${gphoto && !arrived && dist < 250 ? `<div class="look"><img src="${gphoto}" alt=""><span><b>Zo ziet het eruit.</b><br>Kijk ernaar uit, je bent bijna.</span></div>` : ''}
       <div class="mapwrap" id="guideMap"></div>
       <div class="foot"><button data-go="guideclose">Stop</button>${doneBtn}</div>`;
     G.svg = null;
@@ -851,7 +891,7 @@ function rideSheet(id) {
     return `🚫 te klein (min. ${a.withAdult ?? a.alone} cm${a.withAdult ? ' met volwassene' : ''})`;
   };
   const favs = S.fam.favs || [];
-  openSheet(`<div style="display:flex;gap:12px;align-items:center"><span style="font-size:2.4rem" aria-hidden="true">${a.icon}</span><div style="flex:1"><h2>${esc(a.name)}</h2>
+  openSheet(`${photoSrc(a) ? `<div class="ride-photo"><img src="${photoSrc(a)}" alt="${esc(a.name)}"><span class="cr">${credit(a)}</span></div>` : ''}<div style="display:flex;gap:12px;align-items:center"><span style="font-size:2.4rem" aria-hidden="true">${a.icon}</span><div style="flex:1"><h2>${esc(a.name)}</h2>
       <span class="muted small">${{ kids: 'Kinderattractie', family: 'Gezinsattractie', thrill: 'Spanning' }[a.cat]} · ${mins(walkOf(a))} stappen</span></div>${waitBadge(id)}</div>
     <ul class="notes" style="margin-top:12px">${people().map((p) => `<li><span aria-hidden="true">${emoji(p)}</span><span><b>${esc(p.name)}</b> (${num(p.height)} cm): ${rule(p)}</span></li>`).join('')}</ul>
     ${a.wet ? '<p class="small">💧 Je kan nat worden.</p>' : ''}
@@ -1293,7 +1333,7 @@ function renderBanners() {
     b.push(['closing', '⏰', `<b>Nog ${Math.round((L.close - Date.now()) / 60e3)} min open.</b> Tijd voor de laatste ronde${S.fam?.car ? ', daarna brengt 🚗 Auto je terug' : ''}.`]);
   }
   if (isDark() && new Date().getMonth() >= 9 && hasToddler() && !S.dismissed['night' + new Date().toDateString()]) {
-    b.push(['night' + new Date().toDateString(), '🎃', '<b>Het is donker:</b> griezelacteurs en scare zones. Met de peuter: blijf op de brede hoofdpaden en volg de bordjes. Steek je hand op of zeg “stop” als het te eng wordt.', 'night']);
+    b.push(['night' + new Date().toDateString(), '🎃', '<b>Donker: scare zones.</b> Met de peuter op de brede paden blijven. Te eng? Hand op en “stop” zeggen.', 'night']);
   }
   $('#banners').innerHTML = b.map(([k, i, t, cls]) => `<div class="banner ${cls || ''}"><span aria-hidden="true">${i}</span><span>${t}</span>${k.startsWith('night') ? `<button class="x" data-dismiss="${k}" aria-label="Verbergen">✕</button>` : ''}</div>`).join('');
   const pill = $('#livePill');
@@ -1541,6 +1581,8 @@ async function afterFamily() {
   await loadLive();
   flushOutbox(); syncTickets(); loadAlbum().then(processUploads); syncPushFamily();
   renderChatBadge(); flushChat(); loadChat();
+  // warm the offline cache with the ride photos (small, once per version)
+  setTimeout(() => { for (const p of Object.values(PHOTOS)) fetch(`/img/rides/${p.fn}`).catch(() => {}); }, 4000);
 }
 (async function start() {
   S.outbox = store.get('outbox', []);

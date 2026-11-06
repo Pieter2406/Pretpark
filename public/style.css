@@ -348,3 +348,44 @@ label.tog input { width: 22px; height: 22px; accent-color: var(--accent); }
 .ch-form button { width: 48px; min-height: 48px; padding: 0; font-size: 1.2rem; }
 
 @media (max-width: 370px) { .live { display: none; } }
+
+/* ---------- v5 visuals: map pins, labels, landmarks, ride photos */
+svg .lbl { font-family: var(--display); font-weight: 600; paint-order: stroke; stroke: var(--map-ground); fill: var(--ink); stroke-linejoin: round; }
+svg .lbl.small { font-family: var(--font); font-weight: 600; fill: var(--muted); }
+svg .lbl.land { fill: var(--plum); }
+svg .lbl.water { fill: #2a6f9e; stroke: var(--map-water); font-style: italic; opacity: .85; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) svg .lbl.water { fill: #9fd0f2; } }
+:root[data-theme="dark"] svg .lbl.water { fill: #9fd0f2; }
+svg .pin { cursor: pointer; }
+svg .pulse { animation: pulse 1.6s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes pulse { 0% { transform: scale(.6); opacity: .45; } 100% { transform: scale(1.4); opacity: 0; } }
+.legend .lg { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
+.legend .lg::before { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--c); background: var(--surface); }
+.legend span { margin-right: 6px; }
+.ride-photo { position: relative; margin: -10px calc(-1 * var(--gutter)) 12px; height: 180px; overflow: hidden; border-radius: 24px 24px 0 0; background: var(--surface-2); }
+.ride-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ride-photo .cr, .t-photo .cr { position: absolute; right: 8px; bottom: 6px; font-size: .62rem; color: #fff; background: rgba(0,0,0,.45); padding: 2px 6px; border-radius: 6px; max-width: 80%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ride-photo .cr a, .t-photo .cr a { color: #fff; }
+.t-photo { position: relative; height: 150px; margin: -20px -20px 14px; overflow: hidden; }
+.t-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.t-photo::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 55%, rgba(0,0,0,.25)); pointer-events: none; }
+.thumb { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; flex: none; }
+.ride .open .thumb { width: 48px; height: 48px; }
+.guide .head .gthumb { width: 52px; height: 52px; border-radius: 14px; object-fit: cover; }
+.look { display: flex; gap: 10px; align-items: center; background: var(--surface); border-radius: 14px; padding: 8px; margin: 0 0 10px; }
+.look img { width: 96px; height: 64px; border-radius: 10px; object-fit: cover; }
+.look span { font-size: .9rem; }
+.half h3 .thumb { width: 36px; height: 36px; border-radius: 10px; }
+.alt .ic img.thumb { width: 44px; height: 44px; }
+.alt .ic { width: 44px; display: grid; place-items: center; }
+/* map: controls and legend float on the map, so the map gets the space */
+.mapbox { position: relative; }
+.mapview { height: calc(100dvh - 215px); min-height: 360px; }
+.map-tools.ov { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.map-tools.ov button { width: 46px; height: 46px; min-height: 46px; padding: 0; flex: none; border-radius: 50%; font-size: 1.25rem; box-shadow: var(--shadow); background: var(--surface); }
+.map-tools.ov button.wide { width: auto; padding: 0 14px; border-radius: 999px; font-size: .9rem; font-weight: 700; background: var(--sun); color: var(--sun-ink); }
+.legend.ov { position: absolute; left: 10px; bottom: 10px; margin: 0; padding: 6px 10px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: var(--shadow); font-size: .72rem; max-width: calc(100% - 20px); white-space: normal; }
+/* list: "may not" persons clearer (crossed out instead of almost invisible) */
+.dot.no { opacity: .55; position: relative; }
+.dot.no::after { content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px; background: var(--bad); transform: rotate(-35deg); border-radius: 2px; }
+.dot { width: 24px; height: 24px; font-size: .78rem; }

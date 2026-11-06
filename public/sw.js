@@ -7,7 +7,7 @@
 const VERSION = 'pretpark-06ea4e3d451c';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
-  '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest',
+  '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -51,8 +51,8 @@ self.addEventListener('fetch', (e) => {
     e.respondWith((async () => (await caches.match(path, { cacheName: VERSION })) || fetch(req))());
     return;
   }
-  // lazy files (ticket reader libraries): cache after first use
-  if (path.startsWith('/vendor/')) {
+  // lazy files (ticket reader libraries, ride photos): cache after first use
+  if (path.startsWith('/vendor/') || path.startsWith('/img/')) {
     e.respondWith(caches.open('pretpark-lazy').then(async (c) => {
       const hit = await c.match(req); if (hit) return hit;
       const r = await fetch(req); if (okToCache(r)) c.put(req, r.clone()); return r;
