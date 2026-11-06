@@ -186,6 +186,14 @@ export function isMealTime(d) {
 }
 
 // ---------- notifications (used by the Worker every minute, per device)
+// Is the park open (or about to open/just closed) at `now`? With an unknown schedule (live.open null):
+// open when at least one ride is running.
+export function parkOpen(live, now) {
+  if (!live) return false;
+  if (live.open) return now >= live.open - 15 * 60e3 && now <= (live.close || live.open + 12 * 3600e3) + 15 * 60e3;
+  return Object.values(live.rides || {}).some((r) => r?.s === 'OPERATING');
+}
+
 // memo is this device's notification memory; returns { notes:[{tag,title,body,url}], memo }
 export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   memo = { w: {}, sent: {}, ...memo };
@@ -200,13 +208,13 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   const quiet = since('any') < 8 * 60e3;
   const nm = (id) => byId[id]?.name || 'attractie';
 
-  // 1. the ride you're heading to stopped
+  // 1. the ride you're heading to broke down (not a planned closure), only while the target is recent
   const target = fam.target;
-  if (prefs.down !== false && target?.plan) {
+  if (prefs.down !== false && target?.plan && now - (target.setAt || 0) < 90 * 60e3) {
     for (const part of target.plan.parts) {
       if (!part.id) continue;
       const st = status(live, part.id);
-      if (st.known && !st.open && memo.down !== target.setAt + part.id) {
+      if (st.s === 'DOWN' && memo.down !== target.setAt + part.id) {
         const alt = plans(ctx)[0];
         memo.down = target.setAt + part.id;
         notes.push({ tag: 'down', title: `⚠️ ${nm(part.id)} ligt stil`, body: alt ? `Nieuw voorstel: ${describe(alt, people)}` : 'Open de app voor een nieuw voorstel.', url: '/' });
@@ -250,7 +258,8 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   }
   // 4. rest for the pregnant adult
   if (!notes.length && prefs.food !== false && !quiet && people.some((p) => p.pregnant)) {
-    const lastRest = Math.max(fam.ate || 0, fam.pause || 0, fam.created || 0);
+    // counted from the last meal/pause, or from opening time (no reminder right after arriving)
+    const lastRest = Math.max(fam.ate || 0, fam.pause || 0, fam.created || 0, live.open || 0);
     if (now - lastRest > 100 * 60e3 && since('pause') > 100 * 60e3) {
       memo.sent.pause = now;
       const f = foodOptions(walk).find((o) => o.f.seat);

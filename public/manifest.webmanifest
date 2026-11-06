@@ -2,7 +2,6 @@
   "name": "Pretpark",
   "short_name": "Pretpark",
   "lang": "nl",
-  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#fff6ec",
@@ -18,5 +17,6 @@
       "sizes": "180x180",
       "type": "image/png"
     }
-  ]
+  ],
+  "description": "Jullie gids door Walibi"
 }

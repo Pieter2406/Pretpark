@@ -82,7 +82,8 @@ export function makePark(data) {
   }
 
   const toilets = (data.toilets || []).map(([x, y]) => toLL({ x, y }));
-  return { data, toXY, toLL, fromHere, lookahead, toilets };
+  const play = (data.play || []).slice(0, 1).map(([x, y]) => toLL({ x, y })); // OSM maps the one playground twice
+  return { data, toXY, toLL, fromHere, lookahead, toilets, play };
 }
 
 export const pathLength = (pts) => pts.reduce((s, p, i) => (i ? s + Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y) : 0), 0);

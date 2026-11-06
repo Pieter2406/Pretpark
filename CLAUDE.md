@@ -60,8 +60,9 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
   Changing the VAPID key invalidates all existing push subscriptions.
 
 ## Data
-D1 tables `tickets` (code crop + page image per ticket), `families` (id, JSON state incl. last positions of each phone, done list, favourites) and `subs`
-(push subscription per device + prefs + notification memo). Everything older than 7 days is deleted by the cron.
+D1 tables `tickets` (code crop + page image per ticket), `photos` (metadata; files in R2), `families` (id, JSON state incl. last positions of each phone, done list, favourites) and `subs`
+(push subscription per device + prefs + notification memo). Retention (cron): families and their tickets after
+30 days without a change (families with photos are kept), subscriptions after 7 days, photos never.
 No accounts; knowing the family id is the access.
 
 ## Planner tuning and simulation
@@ -71,6 +72,22 @@ No accounts; knowing the family id is the access.
 - `WALK_WEIGHT` in logic.js came from a sweep in the simulator; `fam.walk = 'low'` is the "Liever weinig stappen" setting.
 - The simulator's "plezier" uses the same enjoyment weights as the planner, so compare on rides per person, km and
   waits, not on "plezier" alone.
+
+## v4 (review fixes)
+- Family state is versioned: every /api/family response has `updated`; app.js ignores older copies (`takeFam`).
+- Actions carry `aid` (server de-dupes the last 80) and `at` (client time, clamped); late offline replays can't
+  overwrite a newer target/car (family.js). `fav` takes explicit `on`. New actions: `queue`, `ready` (pushes
+  "✅ Wij zijn klaar" to the other phones immediately), `walk`.
+- Plans are rebuilt server-side by `sanitizePlan` (family.js) before they are stored.
+- Service worker = versioned app shell (cache-first, also for pages); `npm run deploy` stamps VERSION with a content
+  hash (scripts/stamp-sw.mjs). `?fresh=…` bypasses it to log in again. Don't deploy during a park day.
+- First start shows onboarding: new family or paste a family link (the iPhone home-screen app has its own storage).
+- Guide map is built once and only transformed; compass permission is requested from the tap that opens the guide.
+- GPS errors other than "denied" keep the last fix. api() times out after 7 s and counts as offline.
+- Photos are only dropped from the upload queue on 'bad photo'/'photo too big'.
+- Extras: stickers (done rides), photo moment after "Gedaan", partner dot on the map, morning tip, wait trends
+  (last 45 min in localStorage), auto dark mode after sunset, spoken directions (speechSynthesis nl-BE), undo toasts.
+- Tabs: Nu · Kaart (with Kaart/Lijst toggle) · Album · Tickets · Gezin; camera button in the header.
 
 ## Non-obvious decisions
 - Wait times only exist for rides ThemeParks.wiki reports; a ride missing from live data is treated as closed.

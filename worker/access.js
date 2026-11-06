@@ -1,5 +1,7 @@
 // Defence in depth behind Cloudflare Access: every /api request must carry a valid Access JWT for this app,
 // issued to one of the family's e-mail addresses. (Access itself already blocks everyone else at the edge.)
+import { ub64 as dec } from './b64.js';
+
 const TEAM = 'https://pieterverlinden.cloudflareaccess.com';
 const AUD = '5e7b4ac86c3997ba2b9a848c1182db03096f9a4447356a444bd6fb4a17408720'; // Access app "Pretpark"
 export const ALLOWED = ['pieter.verlinden@outlook.com', 'marjan.vandenabeele@gmail.com'];
@@ -14,7 +16,6 @@ async function getKeys() {
   keysAt = Date.now();
   return keys;
 }
-const dec = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 
 // Returns the e-mail address, or null when the request isn't authorised.
 // Local development (`npm run dev`) has no Access in front. It is recognised by all three: plain http, a loopback

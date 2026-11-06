@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "cf dev --port 8787",
     "test": "node --test tests/*.test.js",
-    "check": "cf deploy --dry-run",
-    "deploy": "cf deploy"
+    "check": "node scripts/stamp-sw.mjs && cf deploy --dry-run",
+    "deploy": "node scripts/stamp-sw.mjs && cf deploy",
+    "sim": "node sim/simulate.mjs"
   },
   "devDependencies": {
     "cf": "^1.0.0-beta.23",

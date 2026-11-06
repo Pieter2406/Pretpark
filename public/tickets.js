@@ -22,10 +22,10 @@ function loadZx() {
 
 const canvasOf = (w, h) => { const c = document.createElement('canvas'); c.width = Math.round(w); c.height = Math.round(h); return c; };
 
-async function pdfPages(file) {
+// Renders one page at a time (yields a canvas, frees it after use): a 12-page PDF never holds 12 big canvases (iOS limit)
+async function* pdfPages(file) {
   const pdfjs = await loadPdf();
   const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  const out = [];
   for (let i = 1; i <= Math.min(pdf.numPages, 12); i++) {
     const page = await pdf.getPage(i);
     const vp1 = page.getViewport({ scale: 1 });
@@ -34,18 +34,22 @@ async function pdfPages(file) {
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     await page.render({ canvasContext: ctx, viewport: vp }).promise;
-    out.push(c);
+    page.cleanup();
+    yield c;
+    c.width = c.height = 0;
   }
-  return out;
+  await pdf.destroy();
 }
-async function imageCanvas(file) {
+async function* imagePages(file) {
   const bmp = await createImageBitmap(file);
   const k = Math.min(1, 3000 / Math.max(bmp.width, bmp.height));
   const c = canvasOf(bmp.width * k, bmp.height * k);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   ctx.drawImage(bmp, 0, 0, c.width, c.height);
-  return c;
+  bmp.close?.();
+  yield c;
+  c.width = c.height = 0;
 }
 function toJpeg(src, maxW) {
   const k = Math.min(1, maxW / src.width);
@@ -78,18 +82,18 @@ export async function readTickets(files, onProgress = () => {}) {
   for (const file of files) {
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     onProgress(`${file.name} openen…`);
-    const pages = isPdf ? await pdfPages(file) : [await imageCanvas(file)];
-    for (let i = 0; i < pages.length; i++) {
+    let i = 0;
+    for await (const c of isPdf ? pdfPages(file) : imagePages(file)) {
       onProgress(`Codes zoeken (${++n})…`);
-      const c = pages[i];
       const data = c.getContext('2d').getImageData(0, 0, c.width, c.height);
       const results = (await zx.readBarcodesFromImageData(data, { tryHarder: true, maxNumberOfSymbols: 10, formats: [] }))
         .filter((r) => r.isValid && r.text);
       const page = toJpeg(c, 1300);
-      if (!results.length) found.push({ code: null, format: '', crop: null, page, pageNo: i + 1, source: file.name });
+      i++;
+      if (!results.length) found.push({ code: null, format: '', crop: null, page, pageNo: i, source: file.name });
       for (const r of results) {
         const linear = !/QR|Aztec|DataMatrix|PDF417|MaxiCode/i.test(r.format);
-        found.push({ code: r.text, format: r.format, crop: cropCode(c, r.position, linear), page, pageNo: i + 1, source: file.name });
+        found.push({ code: r.text, format: r.format, crop: cropCode(c, r.position, linear), page, pageNo: i, source: file.name });
       }
     }
   }

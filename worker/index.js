@@ -5,13 +5,17 @@
 // - /api/tickets: imported admission tickets (code crop + page image), shared by the family
 // - /api/photos: the shared photo album, originals + thumbnails in R2 (EU), metadata in D1
 // Everything is behind Cloudflare Access (e-mail code) and checked again here (access.js).
-import { newFamily, apply } from '../public/family.js';
+import { newFamily, apply, okDevice } from '../public/family.js';
 import { accessEmail } from './access.js';
-import { decideNotifications } from '../public/logic.js';
+import { decideNotifications, parkOpen } from '../public/logic.js';
+import { okEndpoint, readyMessage, okDataUrl, liveRides } from './rules.js';
 import { sendPush, publicKey } from './push.js';
 
 const DEST = '8d8a8cc7-4523-4437-8bb6-5c87a26ba5ce'; // Walibi Belgium on ThemeParks.wiki
-const KEEP_DAYS = 7; // tickets, push subscriptions and families without photos; photos are kept until deleted
+// Retention (cron): tickets and families without photos go 30 days after the family's last change, push
+// subscriptions 7 days after it. Photos (and the families that have them) are kept until deleted by hand.
+const KEEP_FAMILY_DAYS = 30;
+const KEEP_SUBS_DAYS = 7;
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
@@ -28,7 +32,7 @@ export default {
       if (parts[1] === 'tickets') return await tickets(request, env, parts[2], parts[3]);
       if (parts[1] === 'live') return json(await getLive(ctx));
       if (parts[1] === 'vapid') return json({ key: env.VAPID_PRIVATE_JWK ? publicKey(env) : null });
-      if (parts[1] === 'family') return await family(request, env, parts[2]);
+      if (parts[1] === 'family') return await family(request, env, ctx, parts[2]);
       if (parts[1] === 'push') return await push(request, env);
       return json({ error: 'not found' }, 404);
     } catch (err) {
@@ -47,7 +51,7 @@ const fail = (status, message) => Object.assign(new Error(message), { status });
 // ---------- live data
 async function getLive(ctx) {
   const cache = caches.default;
-  const key = new Request('https://cache.pretpark/live-v1');
+  const key = new Request('https://cache.pretpark/live-v2');
   const hit = await cache.match(key);
   if (hit) return hit.json();
   const [live, sched, wx] = await Promise.all([
@@ -56,17 +60,13 @@ async function getLive(ctx) {
     getWeather(),
   ]);
   if (!live) throw fail(502, 'live data unavailable');
-  const rides = {};
-  for (const x of live.liveData || []) {
-    if (x.entityType !== 'ATTRACTION') continue;
-    rides[x.id] = { s: x.status, w: x.queue?.STANDBY?.waitTime ?? null };
-  }
+  const rides = liveRides(live.liveData);
   const now = Date.now();
   const today = brusselsDate(now);
   const day = (sched?.parks?.[0]?.schedule || sched?.schedule || []).find((s) => s.date === today && s.type === 'OPERATING');
   const open = day ? Date.parse(day.openingTime) : null, close = day ? Date.parse(day.closingTime) : null;
   const out = {
-    t: now, rides, open, close,
+    t: now, rides, open, close, scheduleKnown: !!day,
     minutesLeft: close ? Math.max(0, Math.round((close - now) / 60e3)) : null,
     localTime: brusselsLocal(now),
     weather: wx,
@@ -113,9 +113,9 @@ function schema(env) {
   return ready;
 }
 const okFamily = (id) => typeof id === 'string' && /^[a-z0-9]{12,32}$/.test(id);
-const okDevice = (d) => typeof d === 'string' && /^[a-z0-9]{8,32}$/i.test(d);
 
-async function family(request, env, id) {
+// Responses: { id, fam, updated } (updated = the row's version, ms); create answers 201.
+async function family(request, env, ctx, id) {
   await schema(env);
   const now = Date.now();
   if (!id) {
@@ -123,13 +123,13 @@ async function family(request, env, id) {
     const newId = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('');
     const fam = newFamily(now);
     await env.DB.prepare('INSERT INTO families (id, data, created, updated) VALUES (?, ?, ?, ?)').bind(newId, JSON.stringify(fam), now, now).run();
-    return json({ id: newId, fam }, 201);
+    return json({ id: newId, fam, updated: now }, 201);
   }
   if (!okFamily(id)) throw fail(400, 'bad family');
   if (request.method === 'GET') {
-    const row = await env.DB.prepare('SELECT data FROM families WHERE id = ?').bind(id).first();
+    const row = await env.DB.prepare('SELECT data, updated FROM families WHERE id = ?').bind(id).first();
     if (!row) throw fail(404, 'no-family');
-    return json({ id, fam: JSON.parse(row.data) });
+    return json({ id, fam: JSON.parse(row.data), updated: row.updated });
   }
   if (request.method !== 'POST') throw fail(405, 'method not allowed');
   const text = await request.text();
@@ -139,13 +139,40 @@ async function family(request, env, id) {
   for (let i = 0; i < 4; i++) {
     const row = await env.DB.prepare('SELECT data, updated FROM families WHERE id = ?').bind(id).first();
     if (!row) throw fail(404, 'no-family');
+    const before = JSON.parse(row.data);
     let fam;
-    try { fam = apply(JSON.parse(row.data), act, now); } catch (e) { throw fail(400, e.message); }
+    try { fam = apply(before, act, now); } catch (e) { throw fail(400, e.message); }
+    if (fam === before) return json({ id, fam, updated: row.updated }); // already applied (same aid): nothing to write
     const t = Math.max(now, row.updated + 1);
     const res = await env.DB.prepare('UPDATE families SET data = ?, updated = ? WHERE id = ? AND updated = ?').bind(JSON.stringify(fam), t, id, row.updated).run();
-    if (res.meta.changes === 1) return json({ id, fam });
+    if (res.meta.changes === 1) {
+      if (act.type === 'ready' && fam.target && JSON.stringify(fam.target.ready) !== JSON.stringify(before.target?.ready)) {
+        ctx?.waitUntil?.(notifyReady(env, id, fam, act).catch((err) => console.error('ready push', err)));
+      }
+      return json({ id, fam, updated: t });
+    }
   }
   throw fail(409, 'busy, try again');
+}
+
+// Sends one notification; a stored subscription that isn't (or is no longer) a valid push service counts as gone.
+async function pushTo(env, subText, note) {
+  const sub = JSON.parse(subText);
+  if (!okEndpoint(sub?.endpoint)) return 410;
+  return sendPush(env, sub, note);
+}
+async function notifyReady(env, id, fam, act) {
+  if (!env.VAPID_PRIVATE_JWK) return;
+  const { results } = await env.DB.prepare('SELECT device, sub FROM subs WHERE family = ?').bind(id).all();
+  const note = readyMessage(fam, act.part);
+  await Promise.all(results.filter((r) => r.device !== act.device).map(async (r) => {
+    try {
+      const status = await pushTo(env, r.sub, note);
+      if (status === 404 || status === 410) await env.DB.prepare('DELETE FROM subs WHERE device = ?').bind(r.device).run();
+    } catch (err) {
+      console.error('ready push', r.device, err);
+    }
+  }));
 }
 
 async function push(request, env) {
@@ -161,25 +188,24 @@ async function push(request, env) {
   const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false };
   const s = body.sub;
   if (s) {
-    if (typeof s.endpoint !== 'string' || !s.endpoint.startsWith('https://') || s.endpoint.length > 1000 || !s.keys?.p256dh || !s.keys?.auth) throw fail(400, 'bad subscription');
+    if (!okEndpoint(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) throw fail(400, 'bad subscription');
     const sub = JSON.stringify({ endpoint: s.endpoint, keys: { p256dh: String(s.keys.p256dh).slice(0, 200), auth: String(s.keys.auth).slice(0, 100) } });
     await env.DB.prepare(`INSERT INTO subs (device, family, sub, prefs, memo, updated) VALUES (?, ?, ?, ?, '{}', ?)
       ON CONFLICT(device) DO UPDATE SET family = excluded.family, sub = excluded.sub, prefs = excluded.prefs, updated = excluded.updated`)
       .bind(body.device, body.family, sub, JSON.stringify(prefs), Date.now()).run();
   } else {
-    await env.DB.prepare('UPDATE subs SET prefs = ? WHERE device = ?').bind(JSON.stringify(prefs), body.device).run();
+    await env.DB.prepare('UPDATE subs SET prefs = ?, family = ? WHERE device = ?').bind(JSON.stringify(prefs), body.family, body.device).run();
   }
   if (body.test) {
     const row = await env.DB.prepare('SELECT sub FROM subs WHERE device = ?').bind(body.device).first();
     if (!row) throw fail(404, 'no subscription');
-    const status = await sendPush(env, JSON.parse(row.sub), { tag: 'test', title: '🎢 Pretpark', body: 'Meldingen staan aan. Veel plezier!', url: '/' });
+    const status = await pushTo(env, row.sub, { tag: 'test', title: '🎢 Pretpark', body: 'Meldingen staan aan. Veel plezier!', url: '/' });
     return json({ ok: status < 300, status });
   }
   return json({ ok: true, prefs });
 }
 
 // ---------- tickets: { id, meta: { name, person, code, format, page: n, source }, crop: dataURL png, page: dataURL jpeg }
-const okDataUrl = (s, type, max) => s == null || (typeof s === 'string' && s.startsWith(`data:${type};base64,`) && s.length <= max);
 async function tickets(request, env, fam, id) {
   await schema(env);
   if (!okFamily(fam)) throw fail(400, 'bad family');
@@ -211,16 +237,20 @@ async function tickets(request, env, fam, id) {
   }
   if (request.method !== 'POST') throw fail(405, 'method not allowed');
   if (!/^[a-z0-9]{8,32}$/.test(t.id)) throw fail(400, 'bad id');
-  if (!okDataUrl(t.crop, 'image/png', 900_000) || !okDataUrl(t.page, 'image/jpeg', 900_000)) throw fail(400, 'bad image');
-  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM tickets WHERE family = ?').bind(fam).first();
-  if (n.n >= 20) throw fail(400, 'too many tickets');
+  if (!okDataUrl(t.crop, 900_000) || !okDataUrl(t.page, 900_000)) throw fail(400, 'bad image');
+  const own = await env.DB.prepare('SELECT family FROM tickets WHERE id = ?').bind(t.id).first();
+  if (own && own.family !== fam) throw fail(409, 'id taken'); // never replace another family's ticket
+  if (!own) {
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM tickets WHERE family = ?').bind(fam).first();
+    if (n.n >= 20) throw fail(400, 'too many tickets');
+  }
   await env.DB.prepare('INSERT OR REPLACE INTO tickets (id, family, meta, crop, page, created) VALUES (?, ?, ?, ?, ?, ?)')
     .bind(t.id, fam, JSON.stringify(meta), t.crop ?? null, t.page ?? null, Date.now()).run();
   return json({ ok: true }, 201);
 }
 
 // ---------- photos: originals in R2 at <family>/<id> and <family>/<id>.t (thumbnail), metadata in D1
-const IMG_TYPES = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp'];
+const IMG_TYPES = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp', 'image/avif', 'image/gif'];
 const MAX_PHOTO = 60 * 1024 * 1024;
 async function photos(request, env, email, fam, id, what) {
   await schema(env);
@@ -241,6 +271,7 @@ async function photos(request, env, email, fam, id, what) {
     obj.writeHttpMetadata(h);
     h.set('etag', obj.httpEtag);
     h.set('cache-control', 'private, max-age=31536000, immutable');
+    h.set('x-content-type-options', 'nosniff');
     const url = new URL(request.url);
     if (url.searchParams.get('dl')) {
       const ext = (h.get('content-type') || 'image/jpeg').split('/')[1].replace('jpeg', 'jpg');
@@ -265,11 +296,19 @@ async function photos(request, env, email, fam, id, what) {
   // multipart: full (original file), thumb (jpeg), meta (json)
   const len = Number(request.headers.get('content-length') || 0);
   if (len > MAX_PHOTO + 2e6) throw fail(413, 'photo too big');
+  // The client drops a queued upload only on 'bad photo' (400) or 'photo too big' (413): anything else is retried.
   const form = await request.formData();
   const full = form.get('full'), thumb = form.get('thumb');
   let m = {}; try { m = JSON.parse(form.get('meta') || '{}'); } catch { /* defaults */ }
   if (!(full instanceof File) || full.size === 0 || full.size > MAX_PHOTO) throw fail(400, 'bad photo');
-  const type = IMG_TYPES.includes(full.type) ? full.type : 'image/jpeg';
+  // not an image (or an SVG, which could run script on this origin): refused. No type (multipart sends a typeless
+  // file as application/octet-stream) or an unusual image type: stored as image/jpeg like before (browsers sniff
+  // the real image format; served with nosniff)
+  const ft = full.type.toLowerCase();
+  if (ft && ft !== 'application/octet-stream' && (!ft.startsWith('image/') || /svg|xml/.test(ft))) throw fail(400, 'bad photo');
+  const type = IMG_TYPES.includes(ft) ? ft : 'image/jpeg';
+  const prev = await env.DB.prepare('SELECT family, meta FROM photos WHERE id = ?').bind(id).first();
+  if (prev && prev.family !== fam) throw fail(409, 'id taken'); // never replace another family's photo
   const t = Number.isFinite(+m.t) && +m.t > 1.6e12 && +m.t < Date.now() + 864e5 ? +m.t : Date.now();
   const stamp = brusselsLocal(t).slice(0, 16).replace(/[-:]/g, '').replace('T', '-'); // 20261107-1432
   await env.PHOTOS.put(`${fam}/${id}`, full.stream(), { httpMetadata: { contentType: type }, customMetadata: { stamp, by: email } });
@@ -282,6 +321,10 @@ async function photos(request, env, email, fam, id, what) {
     lat: Number.isFinite(+m.lat) && m.lat !== null ? +m.lat : null, lon: Number.isFinite(+m.lon) && m.lon !== null ? +m.lon : null,
     near: String(m.near ?? '').slice(0, 60), caption: String(m.caption ?? '').slice(0, 200), star: false,
   };
+  if (prev) { // the same upload again (its answer got lost): keep a star or caption set in the meantime
+    const old = JSON.parse(prev.meta);
+    meta.star = !!old.star; if (old.caption) meta.caption = old.caption;
+  }
   await env.DB.prepare('INSERT OR REPLACE INTO photos (id, family, meta, t, created) VALUES (?, ?, ?, ?, ?)')
     .bind(id, fam, JSON.stringify(meta), t, Date.now()).run();
   return json({ ok: true, id, t, ...meta }, 201);
@@ -291,23 +334,24 @@ async function photos(request, env, email, fam, id, what) {
 async function notifyAll(env, ctx) {
   await schema(env);
   const now = Date.now();
-  const old = now - KEEP_DAYS * 864e5;
-  await env.DB.prepare('DELETE FROM subs WHERE family IN (SELECT id FROM families WHERE updated < ?)').bind(old).run();
-  await env.DB.prepare('DELETE FROM tickets WHERE created < ?').bind(old).run();
-  // a family with photos stays (the album and the day's log belong together); others go after a week
-  await env.DB.prepare('DELETE FROM families WHERE created < ? AND id NOT IN (SELECT DISTINCT family FROM photos)').bind(old).run();
+  const oldFam = now - KEEP_FAMILY_DAYS * 864e5, oldSubs = now - KEEP_SUBS_DAYS * 864e5;
+  // by the family's last change (not by ticket/sub age); rows of families that no longer exist go too
+  await env.DB.prepare('DELETE FROM tickets WHERE family IN (SELECT id FROM families WHERE updated < ?) OR family NOT IN (SELECT id FROM families)').bind(oldFam).run();
+  await env.DB.prepare('DELETE FROM subs WHERE family IN (SELECT id FROM families WHERE updated < ?) OR family NOT IN (SELECT id FROM families)').bind(oldSubs).run();
+  // a family with photos stays (the album and the day's log belong together); photos are never deleted here
+  await env.DB.prepare('DELETE FROM families WHERE updated < ? AND id NOT IN (SELECT DISTINCT family FROM photos)').bind(oldFam).run();
   if (!env.VAPID_PRIVATE_JWK) return;
   const { results } = await env.DB.prepare(
     'SELECT s.device, s.sub, s.prefs, s.memo, f.data FROM subs s JOIN families f ON f.id = s.family WHERE f.updated > ?',
   ).bind(now - 14 * 3600e3).all();
   if (!results.length) return;
   const live = await getLive(ctx).catch(() => null);
-  if (!live || !live.open || now < live.open - 15 * 60e3 || now > live.close + 15 * 60e3) return;
+  if (!parkOpen(live, now)) return; // schedule window, or (schedule unknown) at least one ride running
   for (const r of results) {
     try {
       const { notes, memo } = decideNotifications({ fam: JSON.parse(r.data), deviceId: r.device, live, now, prefs: JSON.parse(r.prefs), memo: JSON.parse(r.memo) });
       for (const n of notes) {
-        const status = await sendPush(env, JSON.parse(r.sub), n);
+        const status = await pushTo(env, r.sub, n);
         if (status === 404 || status === 410) { await env.DB.prepare('DELETE FROM subs WHERE device = ?').bind(r.device).run(); break; }
       }
       await env.DB.prepare('UPDATE subs SET memo = ? WHERE device = ?').bind(JSON.stringify(memo), r.device).run();

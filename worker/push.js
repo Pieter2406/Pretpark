@@ -1,9 +1,10 @@
 // Web Push without libraries: VAPID (RFC 8292) signing and aes128gcm payload encryption (RFC 8291),
 // all with WebCrypto, which Workers provide.
 
+import { b64u, ub64 } from './b64.js';
+
+export { b64u, ub64 };
 const te = new TextEncoder();
-export const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-export const ub64 = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 const concat = (...parts) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
 
 async function hkdf(salt, ikm, info, len) {

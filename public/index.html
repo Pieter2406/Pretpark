@@ -22,7 +22,10 @@
 <body>
 <header class="top">
   <div class="brand"><img src="icon.svg" alt="" width="28" height="28"> Pretpark</div>
-  <div class="live" id="livePill" aria-live="polite">…</div>
+  <div class="hdr-right">
+    <div class="live" id="livePill" aria-live="polite">…</div>
+    <label class="hdr-cam" title="Foto nemen"><input type="file" id="hdrCam" accept="image/*" capture="environment" hidden><span aria-hidden="true">📸</span><span class="sr">Foto nemen voor het album</span></label>
+  </div>
 </header>
 
 <div id="banners" class="banners"></div>
@@ -30,7 +33,6 @@
 <main>
   <section id="view-now" class="view" aria-label="Nu"></section>
   <section id="view-map" class="view" aria-label="Kaart" hidden></section>
-  <section id="view-list" class="view" aria-label="Alle attracties" hidden></section>
   <section id="view-album" class="view" aria-label="Album" hidden></section>
   <section id="view-tickets" class="view" aria-label="Tickets" hidden></section>
   <section id="view-fam" class="view" aria-label="Gezin" hidden></section>
@@ -39,7 +41,6 @@
 <nav class="tabs" aria-label="Schermen">
   <button data-tab="now" aria-current="page"><span aria-hidden="true">✨</span>Nu</button>
   <button data-tab="map"><span aria-hidden="true">🗺️</span>Kaart</button>
-  <button data-tab="list"><span aria-hidden="true">🎢</span>Lijst</button>
   <button data-tab="album"><span aria-hidden="true">📸</span>Album</button>
   <button data-tab="tickets"><span aria-hidden="true">🎟️</span>Tickets</button>
   <button data-tab="fam"><span aria-hidden="true">👨‍👩‍👧‍👦</span>Gezin</button>
@@ -48,8 +49,8 @@
 <!-- full-screen walking guide -->
 <div id="guide" class="guide" hidden role="dialog" aria-modal="true" aria-label="Wandelgids"></div>
 
-<!-- quick photo button on Nu and Kaart -->
-<label id="fab" class="fab" hidden><input type="file" id="fabIn" accept="image/*" capture="environment" hidden><span aria-hidden="true">📸</span><span class="sr">Foto nemen</span></label>
+<!-- first start: new family or join one, names, who am I -->
+<div id="onboard" class="onboard" hidden role="dialog" aria-modal="true" aria-label="Welkom"></div>
 
 <!-- photo viewer and the day's story -->
 <div id="pview" class="pview" hidden role="dialog" aria-modal="true" aria-label="Foto"></div>

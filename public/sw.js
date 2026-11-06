@@ -1,9 +1,10 @@
-// Service worker: makes the app open without signal, and shows push notifications.
-// - App files and the park map are pre-cached per VERSION (bump it on every deploy that changes public/ files,
-//   so all files switch together); pages are network-first, other files come from the cache and refresh behind.
-// - /api/* is never cached here: app.js keeps its own last copies (localStorage, IndexedDB for tickets).
-// - Cloudflare Access: a redirect to the login page is passed through untouched and never cached.
-const VERSION = 'pretpark-v4';
+// Service worker: the app opens instantly and without signal, and shows push notifications.
+// - All app files are pre-cached together per VERSION (scripts/stamp-sw.mjs sets it from a hash of public/ on
+//   every `npm run deploy`), and served only from that set, so a page never mixes old and new files.
+// - Pages come from the cache too (instant start on weak park data); ?fresh=… forces the network, used to log in again.
+// - A new version installs in the background; the app shows "Nieuwe versie · Herladen".
+// - /api/* is never cached here: app.js keeps its own last copies (localStorage, IndexedDB).
+const VERSION = 'pretpark-3fc28d5e5e63';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
   '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest',
@@ -12,15 +13,16 @@ const SHELL = [
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(VERSION);
-    // one by one: a single failure (e.g. logged out) must not break the install
-    await Promise.all(SHELL.map(async (u) => {
-      try { const r = await fetch(u, { redirect: 'manual', cache: 'no-cache' }); if (r.ok && r.type === 'basic') await c.put(u, r); } catch { /* next time */ }
+    const ok = await Promise.all(SHELL.map(async (u) => {
+      try { const r = await fetch(u, { redirect: 'manual', cache: 'no-cache' }); if (r.ok && r.type === 'basic') { await c.put(u, r); return true; } } catch { /* below */ }
+      return false;
     }));
-    self.skipWaiting();
+    // a half-filled set would mix versions: only take over when every file arrived (e.g. not while logged out)
+    if (ok.every(Boolean)) self.skipWaiting(); else { await caches.delete(VERSION); throw new Error('incomplete'); }
   })());
 });
 self.addEventListener('activate', (e) => e.waitUntil((async () => {
-  for (const k of await caches.keys()) if (k !== VERSION && k !== 'pretpark-fonts') await caches.delete(k);
+  for (const k of await caches.keys()) if (k !== VERSION && k !== 'pretpark-fonts' && k !== 'pretpark-lazy') await caches.delete(k);
   await self.clients.claim();
 })()));
 
@@ -40,24 +42,22 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/cdn-cgi/')) return;
 
   if (req.mode === 'navigate') {
-    e.respondWith((async () => {
-      try {
-        const r = await fetch(req);
-        if (okToCache(r)) (await caches.open(VERSION)).put('/', r.clone());
-        return r;
-      } catch {
-        return (await caches.match('/', { ignoreSearch: true })) || Response.error();
-      }
-    })());
+    if (url.searchParams.has('fresh')) return; // log in again: straight to the network (Cloudflare Access)
+    e.respondWith((async () => (await caches.match('/', { cacheName: VERSION })) || fetch(req))());
     return;
   }
-  e.respondWith((async () => {
-    const c = await caches.open(VERSION);
-    const hit = await c.match(req, { ignoreSearch: true });
-    const net = fetch(req).then((r) => { if (okToCache(r)) c.put(req, r.clone()); return r; }).catch(() => null);
-    if (hit) { e.waitUntil(net); return hit; }
-    return (await net) || Response.error();
-  })());
+  const path = url.pathname;
+  if (SHELL.includes(path)) {
+    e.respondWith((async () => (await caches.match(path, { cacheName: VERSION })) || fetch(req))());
+    return;
+  }
+  // lazy files (ticket reader libraries): cache after first use
+  if (path.startsWith('/vendor/')) {
+    e.respondWith(caches.open('pretpark-lazy').then(async (c) => {
+      const hit = await c.match(req); if (hit) return hit;
+      const r = await fetch(req); if (okToCache(r)) c.put(req, r.clone()); return r;
+    }));
+  }
 });
 
 self.addEventListener('push', (e) => {

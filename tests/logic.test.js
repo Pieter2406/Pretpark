@@ -70,9 +70,9 @@ test('notifications: a stopped target ride is reported once', () => {
   const live = allOpen();
   const fam = { ...newFamily(0), positions: { dev12345678: { lat: 50.699, lon: 4.59, t: Date.now() } } };
   const k = find('Kondaa').id;
-  fam.target = { plan: { type: 'together', parts: [{ id: k, group: ['p1'] }] }, setAt: 1 };
-  live.rides[k] = { s: 'DOWN', w: 0 };
   const now = Date.now();
+  fam.target = { plan: { type: 'together', parts: [{ id: k, group: ['p1'] }] }, setAt: now - 60e3 };
+  live.rides[k] = { s: 'DOWN', w: 0 };
   const r1 = decideNotifications({ fam, deviceId: 'dev12345678', live, now, prefs: {}, memo: {} });
   assert.equal(r1.notes[0]?.tag, 'down');
   const r2 = decideNotifications({ fam, deviceId: 'dev12345678', live, now: now + 60e3, prefs: {}, memo: r1.memo });
