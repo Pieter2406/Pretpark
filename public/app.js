@@ -410,6 +410,7 @@ function renderNow() {
   if (!S.fam) { el.innerHTML = '<p class="empty">Laden…</p>'; return; }
   let html = statusLine() + morningTip();
   const L = S.live;
+  if (parkingTicketIndex() < 0 && (S.sim === 'far' || (L?.open && Date.now() < L.open + 30 * 60e3))) html += parkingCard(true);
   if (shownTickets().length && (S.sim === 'far' || (L?.open && Date.now() < L.open + 90 * 60e3))) {
     html += `<button class="primary big" data-tview="0" style="margin:8px 0 4px">🎟️ Toon onze tickets (${shownTickets().length})</button>`;
   }
@@ -1001,6 +1002,17 @@ function stickerSheet() {
     <button data-go="sheetclose" style="width:100%;margin-top:10px">Sluiten</button>`);
 }
 
+// ---------- parking ticket: bought in Walibi's own online shop (the app takes no payments), then imported as a ticket
+// marked 🚗 Parking, so it's shown at the barrier like the entry tickets (also offline). Link from walibi.be/nl/faq.
+const PARKING_URL = 'https://reservation.walibi.be/addons/WBETOCS2025PARKING/?locale=nl-NL';
+const parkingTicketIndex = () => shownTickets().findIndex((t) => t.person === 'car');
+function parkingCard(compact) {
+  const i = parkingTicketIndex();
+  if (i >= 0) return `<div class="pcard ok"><span class="pico" aria-hidden="true">🅿️</span><span><b>Parkeerticket staat klaar</b><br><span class="small muted">Toon het aan de slagboom.</span></span><button class="primary" data-tview="${i}">Toon</button></div>`;
+  return `<div class="pcard${compact ? '' : ' wide'}"><span class="pico" aria-hidden="true">🅿️</span><span><b>${compact ? 'Parking: €13' : 'Parkeerticket: €13 per auto'}</b>${compact ? '' : '<br><span class="small muted">Koop het online bij Walibi (je betaalt op hun site), of aan de kassa bij de ingang. Voeg daarna het ticket hier toe en kies <b>🚗 Parking</b>.</span>'}</span>
+    <a class="btn primary" href="${PARKING_URL}" target="_blank" rel="noopener noreferrer">Koop bij Walibi ↗</a></div>`;
+}
+
 // ---------- tickets (IndexedDB on the phone + shared via the server)
 const shownTickets = () => S.tickets.filter((t) => !pendingDelete.has('t:' + t.id));
 async function syncTickets() {
@@ -1034,7 +1046,8 @@ async function importTickets(files) {
     let added = 0, nr = S.tickets.length;
     for (const f of found) {
       if (f.code && known.has(f.code)) continue;
-      const t = { ...f, id: rnd(16), name: `Ticket ${++nr}`, person: null, created: Date.now() + nr, pending: true };
+      const isParking = /parking|parkeer|stationnement/i.test(`${f.source} ${f.code || ''}`);
+      const t = { ...f, id: rnd(16), name: isParking ? 'Parkeerticket' : `Ticket ${++nr}`, person: isParking ? 'car' : null, created: Date.now() + nr, pending: true };
       await idb.put('tickets', t); added++;
     }
     const noCode = found.filter((f) => !f.code).length;
@@ -1052,6 +1065,7 @@ function renderTickets() {
   const ps = people();
   const list = shownTickets();
   el.innerHTML = `<p class="kicker">Onze tickets</p>
+    ${parkingCard(false)}
     ${S.ticketBusy ? `<div class="card"><p id="tbusy" class="say">⏳ ${esc(S.ticketBusy)}</p></div>` : ''}
     ${list.length ? `<button class="primary big" data-tview="0" style="margin-bottom:12px">🎟️ Toon aan de ingang</button>
       <div class="tlist">${list.map((t, i) => `
@@ -1061,6 +1075,7 @@ function renderTickets() {
           <input type="text" data-tname="${esc(t.id)}" value="${esc(t.name)}" maxlength="40" aria-label="Naam van het ticket">
           <select data-tperson="${esc(t.id)}" aria-label="Voor wie">
             <option value="">Voor wie?</option>${ps.map((p) => `<option value="${p.id}" ${t.person === p.id ? 'selected' : ''}>${emoji(p)} ${esc(p.name)}</option>`).join('')}
+            <option value="car" ${t.person === 'car' ? 'selected' : ''}>🚗 Parking</option>
           </select>
           <span class="small muted">${t.code ? `${esc(t.format)} · …${esc(String(t.code).slice(-6))}` : 'Code niet herkend: toont het hele ticket'}${t.pending ? ' · ⏳ nog niet gedeeld' : ''}${t.error ? ` · ⚠️ ${esc(t.error)}` : ''}</span>
         </div>
@@ -1081,7 +1096,7 @@ function drawViewer() {
   const p = person(t.person);
   const showPage = tv.page || !imgSrc(t.crop);
   $('#tview').innerHTML = `<div class="tv-top"><span>${tv.i + 1} / ${list.length}</span><button data-go="tvclose" aria-label="Sluiten">✕</button></div>
-    <div class="tv-who">${p ? `${emoji(p)} ${esc(p.name)}` : esc(t.name)}</div>
+    <div class="tv-who">${t.person === 'car' ? '🚗 Parkeerticket' : p ? `${emoji(p)} ${esc(p.name)}` : esc(t.name)}</div>
     <div class="tv-code ${showPage ? 'page' : ''}"><img src="${showPage ? imgSrc(t.page) : imgSrc(t.crop)}" alt="Ticketcode van ${esc(p?.name || t.name)}"></div>
     <p class="tv-hint">☀️ Scherm op maximale helderheid · swipe voor het volgende ticket</p>
     <div class="tv-nav"><button data-go="tvprev" ${tv.i === 0 ? 'disabled' : ''}>‹ Vorige</button>
@@ -1337,6 +1352,7 @@ function carSheet() {
   const c = S.fam.car;
   const canSave = S.gps && !S.manual && !S.sim;
   openSheet(`<h2>🚗 De auto</h2>
+    ${parkingCard(true)}
     ${c ? `<p class="small muted">Bewaard om ${hhmm(c.t)}${c.note ? ` · ${esc(c.note)}` : ''} · ${mins(walkOf(c))} stappen</p>
       <button class="primary big" data-go="carguide">🧭 Breng me naar de auto</button>` : '<p class="small muted">Bewaar waar de auto staat als je hem parkeert. Vanavond brengt de pijl je terug, ook in het donker.</p>'}
     <label style="display:block;margin:12px 0 6px"><span class="small muted">Notitie (bv. rij C12)</span>
@@ -1634,6 +1650,7 @@ document.addEventListener('change', async (e) => {
     const patch = e.target.dataset.tname ? { name: e.target.value.slice(0, 40) } : { person: e.target.value || null };
     Object.assign(t, patch); await idb.put('tickets', t);
     if (!t.pending) api(`/api/tickets/${S.famId}/${t.id}`, { method: 'PATCH', body: patch }).catch(() => { t.pending = true; idb.put('tickets', t); });
+    if (e.target.dataset.tperson) renderTickets(); // the parking card and the order follow the choice
     return;
   }
   if (e.target.dataset.pref) {

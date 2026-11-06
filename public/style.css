@@ -415,3 +415,13 @@ img { -webkit-user-drag: none; }
 .themeseg button { min-height: 48px; }
 .themeseg button[aria-checked="true"] { background: var(--sun); color: var(--sun-ink); border-color: var(--sun); font-weight: 700; }
 html { transition: background-color .4s; }
+/* parking ticket card */
+.pcard { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; background: var(--surface); border-radius: 18px; padding: 12px 12px 12px 14px; margin: 8px 0 12px; box-shadow: var(--shadow); border: 2px solid #2f6fd6; }
+.pcard.ok { border-color: var(--ok); }
+.pcard .pico { width: 40px; height: 40px; border-radius: 10px; background: #2f6fd6; color: #fff; display: grid; place-items: center; font-size: 1.4rem; }
+.pcard.ok .pico { background: var(--ok); }
+.pcard .btn, .pcard button { white-space: nowrap; min-height: 44px; }
+.pcard .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+.pcard.wide { grid-template-columns: auto minmax(0, 1fr); }
+.pcard.wide .btn { grid-column: 1 / -1; justify-content: center; }
+@media (max-width: 380px) { .pcard { grid-template-columns: auto minmax(0, 1fr); } .pcard .btn, .pcard button { grid-column: 1 / -1; justify-content: center; } }

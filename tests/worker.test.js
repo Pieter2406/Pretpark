@@ -285,3 +285,13 @@ test('chat: validated messages, idempotent POST, ?after=, pushed to the other ph
   assert.ok(newer.data.every((m) => m.t > m1.data.t));
   assert.equal((await call('GET', '/api/chat/doesnotexist000')).status, 404);
 });
+
+test('tickets: a ticket can be marked as the parking ticket (person "car")', async () => {
+  const { id } = await newFam();
+  const crop = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.equal((await call('POST', `/api/tickets/${id}`, { id: 'parkingticket01', name: 'Parkeerticket', person: 'car', code: 'PARK123', crop })).status, 201);
+  assert.equal((await call('POST', `/api/tickets/${id}`, { id: 'parkingticket02', name: 'x', person: 'bus', code: 'X', crop })).status, 201);
+  const list = (await call('GET', `/api/tickets/${id}`)).data;
+  assert.equal(list.find((t) => t.id === 'parkingticket01').person, 'car');
+  assert.equal(list.find((t) => t.id === 'parkingticket02').person, null);
+});

@@ -140,3 +140,11 @@ No accounts; knowing the family id is the access.
   divided by minutes (walk × 1.25 with a pregnant adult × WALK_WEIGHT + wait + ride).
 - The Worker has no path graph: it uses straight-line × 1.35 for walking times in notifications.
 - `localTime` in /api/live is Brussels wall-clock written as UTC so `getHours()` works inside the Worker.
+
+## Parking ticket
+- The app sells nothing itself: `PARKING_URL` in app.js links to Walibi's own shop (reservation.walibi.be addon
+  `WBETOCS2025PARKING`, €13 per car in 2026; also at the park's ticket booths). Check the link/price each season.
+- A ticket with `person: 'car'` is the parking ticket (select "🚗 Parking", or auto-detected on import when the file
+  name or code says parking/parkeer/stationnement). It sorts first in the viewer and shows "🚗 Parkeerticket".
+- `parkingCard()` shows "buy" or "staat klaar · Toon" on the Tickets tab, in the car sheet and on Nu until 30 min
+  after opening.

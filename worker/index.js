@@ -267,7 +267,7 @@ async function tickets(request, env, fam, id) {
   if (text.length > 1_900_000) throw fail(413, 'ticket too big');
   let t; try { t = JSON.parse(text); } catch { throw fail(400, 'bad json'); }
   const meta = {
-    name: String(t.name ?? '').slice(0, 40), person: /^p\d{1,2}$/.test(t.person) ? t.person : null,
+    name: String(t.name ?? '').slice(0, 40), person: /^(p\d{1,2}|car)$/.test(t.person) ? t.person : null, // 'car' = the parking ticket
     code: t.code == null ? null : String(t.code).slice(0, 2000), format: String(t.format ?? '').slice(0, 30),
     source: String(t.source ?? '').slice(0, 80), pageNo: Number(t.pageNo) || 1,
   };
