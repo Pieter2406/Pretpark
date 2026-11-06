@@ -18,7 +18,7 @@ export default defineConfig({
     "assets": { "runWorkerFirst": ["/api/*"] },
     "triggers": [triggers.scheduled({ schedule: "* * * * *" })],
     "env": {
-      "DB": bindings.d1(),
+      "DB": bindings.d1({ name: "pretpark-eu" }), // EU jurisdiction
       // VAPID private key (JWK) for Web Push: locally in .dev.vars, online via `cf deploy --secrets-file .dev.vars`
       "VAPID_PRIVATE_JWK": bindings.secret(),
     },

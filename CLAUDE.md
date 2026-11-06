@@ -27,6 +27,7 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
 ## Run, test, deploy
 - `npm run dev` (needs `.dev.vars` with `VAPID_PRIVATE_JWK='<jwk json>'`; generate a P-256 ECDSA key if missing).
 - `npm test` (node:test on logic + family actions).
+- D1 database `pretpark-eu` (EU jurisdiction), bound by name in cloudflare.config.ts.
 - `npm run deploy` — first time, or when the key changes: `npx cf deploy --secrets-file .dev.vars`.
   Changing the VAPID key invalidates all existing push subscriptions.
 
