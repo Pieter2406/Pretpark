@@ -1,8 +1,10 @@
 // Pretpark: the screens. State lives in S; every change calls render(). The shared family state lives on the
 // server (family.js actions); wait times come from /api/live; walking routes from route.js over park.json.
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
-import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM } from './logic.js';
+import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON } from './logic.js';
 import { makePark, pathLength, bearingXY } from './route.js';
+import { apply } from './family.js';
+import { idb } from './idb.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -17,6 +19,7 @@ const device = store.get('device') || (() => { const d = rnd(16); store.set('dev
 const S = {
   famId: null, fam: null, live: null, park: null, here: null, plans: [],
   gps: null, manual: store.get('manual', null), sim: 'wait', heading: null, headingSrc: null,
+  tickets: [], ticketBusy: '', auth: false, liveStale: false, outbox: [],
   tab: 'now', guide: null, filter: 'us', mapZoom: true, placing: false, dismissed: store.get('dismissed', {}), offline: false,
 };
 
@@ -28,32 +31,75 @@ const emoji = (p) => (p.pregnant ? '🤰' : p.kind === 'adult' ? '🧑' : p.heig
 const pname = (p) => (p.id === meId() ? 'Jij' : p.name);
 
 // ---------- network
+// Errors: e.offline (no network), e.status 401 (Cloudflare Access session expired: log in again)
 async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  let res;
+  try {
+    res = await fetch(path, { ...opts, redirect: 'manual', headers: { 'content-type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  } catch {
+    S.offline = true;
+    throw Object.assign(new Error('offline'), { offline: true });
+  }
+  S.offline = false;
+  if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); throw Object.assign(new Error('auth'), { status: 401 }); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || res.status), { status: res.status });
   return data;
 }
+// Last good copies, so the app opens and plans without signal
+const cached = {
+  save(k, v) { store.set('c:' + k, { t: Date.now(), v }); },
+  load(k) { return store.get('c:' + k, null); },
+};
+const saveFam = () => cached.save('fam', { id: S.famId, fam: S.fam });
+
+// Change the shared family state. Offline: apply it here (same rules as the server) and send it later.
 async function act(a, quiet = false) {
   try {
     const r = await api('/api/family/' + S.famId, { method: 'POST', body: a });
-    S.fam = r.fam; S.offline = false;
+    S.fam = r.fam; saveFam();
     recompute(); if (!quiet) render();
     return true;
   } catch (e) {
-    if (!quiet) toast('Geen verbinding. Probeer zo opnieuw.');
-    S.offline = true; renderBanners();
+    if (e.offline && a.type !== 'pos') {
+      try { S.fam = apply(S.fam, a, Date.now()); } catch { return false; }
+      S.outbox.push(a); store.set('outbox', S.outbox); saveFam();
+      recompute(); if (!quiet) { render(); toast('Offline: bewaard, ik stuur het door zodra er bereik is'); }
+      return true;
+    }
+    if (!quiet && !e.offline && e.status !== 401) toast('Dat lukte niet. Probeer zo opnieuw.');
+    renderBanners();
     return false;
   }
+}
+let flushing = false;
+async function flushOutbox() {
+  if (flushing || !S.outbox.length || !S.famId) return;
+  flushing = true;
+  try {
+    while (S.outbox.length) {
+      try { const r = await api('/api/family/' + S.famId, { method: 'POST', body: S.outbox[0] }); S.fam = r.fam; }
+      catch (e) { if (e.offline || e.status === 401) break; } // a rejected action (4xx) is dropped
+      S.outbox.shift(); store.set('outbox', S.outbox);
+    }
+    saveFam(); recompute(); render();
+  } finally { flushing = false; }
 }
 
 async function loadFamily() {
   const url = new URL(location.href);
   let id = url.searchParams.get('g') || store.get('fam');
   if (id) {
-    try { const r = await api('/api/family/' + id); S.fam = r.fam; S.famId = id; } catch (e) { if (e.status !== 404) throw e; id = null; }
+    try { const r = await api('/api/family/' + id); S.fam = r.fam; S.famId = id; }
+    catch (e) {
+      const c = cached.load('fam');
+      if ((e.offline || e.status === 401) && c?.v?.id === id) { S.fam = c.v.fam; S.famId = id; } // offline: last copy
+      else if (e.status === 404) id = null;
+      else throw e;
+    }
   }
   if (!id) { const r = await api('/api/family', { method: 'POST' }); S.fam = r.fam; S.famId = r.id; }
+  saveFam();
   store.set('fam', S.famId);
   // keep the family in the address, so "Add to Home Screen" and sharing carry it
   url.searchParams.set('g', S.famId);
@@ -61,14 +107,17 @@ async function loadFamily() {
   return url;
 }
 async function loadLive() {
-  try { S.live = await api('/api/live'); S.offline = false; } catch { S.offline = true; }
+  try { S.live = await api('/api/live'); S.liveStale = false; cached.save('live', S.live); }
+  catch { if (!S.live) S.live = cached.load('live')?.v || null; S.liveStale = !!S.live; }
   recompute(); render();
 }
 async function pollFamily() {
-  if (document.hidden) return;
+  if (document.hidden || !S.famId) return;
+  await flushOutbox();
+  if (S.outbox.length) return; // keep local changes until they're sent
   try {
     const r = await api('/api/family/' + S.famId);
-    if (JSON.stringify(r.fam) !== JSON.stringify(S.fam)) { S.fam = r.fam; recompute(); render(); }
+    if (JSON.stringify(r.fam) !== JSON.stringify(S.fam)) { S.fam = r.fam; saveFam(); recompute(); render(); }
   } catch { /* next time */ }
 }
 
@@ -133,7 +182,7 @@ function recompute() {
   const minutesLeft = S.live?.close ? Math.round((S.live.close - Date.now()) / 60e3) : null;
   S.plans = S.live ? plans({
     people: people(), favs: S.fam.favs, done: S.fam.done, live: S.live, walk: (a) => S.here.metres(a),
-    month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null,
+    month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null, rain: raining(S.live),
   }) : [];
 }
 const walkOf = (x) => (S.here ? S.here.metres(x) : distM(pos(), x) * 1.35);
@@ -217,7 +266,11 @@ function guideTargetFor(plan) {
 function renderNow() {
   const el = $('#view-now');
   if (!S.fam) { el.innerHTML = '<p class="empty">Laden…</p>'; return; }
-  let html = '';
+  let html = weatherLine();
+  const L = S.live;
+  if (S.tickets.length && (S.sim === 'far' || (L?.open && Date.now() < L.open + 90 * 60e3))) {
+    html += `<button class="primary big" data-tab="tickets" style="margin-top:8px">🎟️ Toon onze tickets (${S.tickets.length})</button>`;
+  }
   if (!meId()) {
     const adults = people().filter((p) => p.kind === 'adult');
     html += `<div class="card"><h2>Wie gebruikt deze gsm?</h2><p class="muted small">Dan weet ik wie waarheen moet als jullie splitsen.</p>
@@ -239,7 +292,8 @@ function renderNow() {
     <button data-go="food"><span aria-hidden="true">🍽️</span>Eten</button>
     <button data-go="toilet"><span aria-hidden="true">🚻</span>Toilet</button>
     <button data-go="pause"><span aria-hidden="true">🪑</span>Pauze</button>
-    <button data-tab-go="map"><span aria-hidden="true">📍</span>Waar ben ik</button></div>`;
+    <button data-go="car"><span aria-hidden="true">🚗</span>Auto</button></div>
+    <button class="ghost small" data-go="lost" style="width:100%;margin-top:4px">🆘 Kind kwijt?</button>`;
   const alts = S.plans.filter((p) => p.key !== t?.plan?.key).slice(t ? 0 : 1, t ? 3 : 4);
   if (alts.length) {
     html += `<p class="kicker">${t ? 'Of liever' : 'Ook goed'}</p><div class="alts">` + alts.map((p) => {
@@ -525,17 +579,152 @@ function rideSheet(id) {
       <button data-doneone="${a.id}">✓ Gedaan${S.fam.done[a.id] ? ` (${S.fam.done[a.id]}×)` : ''}</button></div>`);
 }
 
+// ---------- weather
+function weatherLine() {
+  const w = S.live?.weather;
+  if (!w?.now || w.now.t == null) return '';
+  const now = Date.now();
+  const next = (w.hours || []).filter((h) => { const t = Date.parse(h.h); return t >= now - 3600e3 && t < now + 6 * 3600e3; });
+  const wet = next.reduce((m, h) => (h.p > (m?.p ?? -1) ? h : m), null);
+  const at = (h) => new Date(h.h).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' });
+  const rainTxt = raining(S.live) ? 'het regent nu: binnenattracties krijgen voorrang'
+    : wet && wet.p >= 30 ? `kans op regen ${Math.round(wet.p)}% rond ${at(wet)}` : 'droog de komende uren';
+  return `<p class="wx">${WX_ICON(w.now.sym)} <b>${Math.round(w.now.t)}°</b> · ${rainTxt}</p>`;
+}
+
+// ---------- tickets (IndexedDB on the phone + shared via the server)
+async function syncTickets() {
+  const local = await idb.all('tickets');
+  S.tickets = local;
+  try {
+    for (const t of local.filter((x) => x.pending)) {
+      await api(`/api/tickets/${S.famId}`, { method: 'POST', body: { ...t, pending: undefined } });
+      t.pending = false; await idb.put('tickets', t);
+    }
+    const remote = await api(`/api/tickets/${S.famId}`);
+    const ids = new Set(remote.map((t) => t.id));
+    for (const t of local) if (!ids.has(t.id) && !t.pending) await idb.del('tickets', t.id);
+    for (const t of remote) await idb.put('tickets', t);
+    S.tickets = await idb.all('tickets');
+  } catch { /* offline: the phone's copy is enough */ }
+  S.tickets.sort((a, b) => (a.person || 'z').localeCompare(b.person || 'z') || a.created - b.created);
+  if (S.tab === 'tickets') renderTickets();
+}
+async function importTickets(files) {
+  if (!files.length) return;
+  S.ticketBusy = 'Tickets lezen…'; renderTickets();
+  try {
+    const { readTickets } = await import('./tickets.js');
+    const found = await readTickets(files, (msg) => { S.ticketBusy = msg; const el = $('#tbusy'); if (el) el.textContent = msg; });
+    const known = new Set(S.tickets.map((t) => t.code).filter(Boolean));
+    let added = 0, nr = S.tickets.length;
+    for (const f of found) {
+      if (f.code && known.has(f.code)) continue;
+      const t = { ...f, id: rnd(16), name: `Ticket ${++nr}`, person: null, created: Date.now() + nr, pending: true };
+      await idb.put('tickets', t); added++;
+    }
+    const noCode = found.filter((f) => !f.code).length;
+    toast(added ? `🎟️ ${added} ticket${added > 1 ? 's' : ''} toegevoegd${noCode ? ` (${noCode} zonder herkende code)` : ''}` : 'Geen nieuwe tickets gevonden');
+  } catch (e) {
+    console.error(e); toast('Inlezen lukte niet. Probeer een screenshot van de code.');
+  }
+  S.ticketBusy = '';
+  await syncTickets();
+}
+function renderTickets() {
+  const el = $('#view-tickets');
+  if (!el) return;
+  const ps = people();
+  el.innerHTML = `<p class="kicker">Onze tickets</p>
+    ${S.ticketBusy ? `<div class="card"><p id="tbusy" class="say">⏳ ${esc(S.ticketBusy)}</p></div>` : ''}
+    ${S.tickets.length ? `<div class="tlist">${S.tickets.map((t, i) => `
+      <div class="tcard">
+        <button class="tthumb" data-tview="${i}" aria-label="Toon ${esc(t.name)}">${t.crop ? `<img src="${t.crop}" alt="">` : t.page ? `<img src="${t.page}" alt="" class="page">` : '🎟️'}</button>
+        <div class="tinfo">
+          <input type="text" data-tname="${t.id}" value="${esc(t.name)}" maxlength="40" aria-label="Naam van het ticket">
+          <select data-tperson="${t.id}" aria-label="Voor wie">
+            <option value="">Voor wie?</option>${ps.map((p) => `<option value="${p.id}" ${t.person === p.id ? 'selected' : ''}>${emoji(p)} ${esc(p.name)}</option>`).join('')}
+          </select>
+          <span class="small muted">${t.code ? `${esc(t.format)} · …${esc(String(t.code).slice(-6))}` : 'Code niet herkend: toont het hele ticket'}${t.pending ? ' · ⏳ nog niet gedeeld' : ''}</span>
+        </div>
+        <button class="ghost" data-tdel="${t.id}" aria-label="Verwijder ${esc(t.name)}">🗑️</button>
+      </div>`).join('')}</div>
+      <button class="primary big" data-tview="0" style="margin-top:12px">🎟️ Toon aan de ingang</button>` :
+    `<div class="card"><h2>Nog geen tickets</h2><p class="muted small">Voeg jullie e-tickets toe (PDF uit de mail, of een screenshot van de QR- of barcode). Ze staan daarna op deze gsm, ook zonder bereik, en ook op de gsm van je partner.</p></div>`}
+    <label class="filebtn"><input type="file" id="tfile" accept="application/pdf,image/*" multiple hidden> <span>＋ Tickets toevoegen (PDF of foto)</span></label>
+    <p class="muted small">Tip: zet je scherm op maximale helderheid aan de ingang. Bij een PDF met meerdere tickets maak ik van elke code een apart ticket.</p>`;
+}
+let tv = { i: 0, page: false };
+function openViewer(i) {
+  if (!S.tickets.length) return;
+  tv = { i: Math.max(0, Math.min(i, S.tickets.length - 1)), page: false };
+  $('#tview').hidden = false; wake(true); drawViewer();
+}
+function drawViewer() {
+  const t = S.tickets[tv.i]; const p = person(t.person);
+  const showPage = tv.page || !t.crop;
+  $('#tview').innerHTML = `<div class="tv-top"><span>${tv.i + 1} / ${S.tickets.length}</span><button data-go="tvclose" aria-label="Sluiten">✕</button></div>
+    <div class="tv-who">${p ? `${emoji(p)} ${esc(p.name)}` : esc(t.name)}</div>
+    <div class="tv-code ${showPage ? 'page' : ''}"><img src="${showPage ? t.page : t.crop}" alt="Ticketcode van ${esc(p?.name || t.name)}"></div>
+    <p class="tv-hint">☀️ Scherm op maximale helderheid</p>
+    <div class="tv-nav"><button data-go="tvprev" ${tv.i === 0 ? 'disabled' : ''}>‹ Vorige</button>
+      ${t.crop && t.page ? `<button data-go="tvpage">${showPage ? 'Alleen de code' : 'Hele ticket'}</button>` : ''}
+      <button data-go="tvnext" ${tv.i === S.tickets.length - 1 ? 'disabled' : ''}>Volgende ›</button></div>`;
+}
+function closeViewer() { $('#tview').hidden = true; if (!S.guide) wake(false); }
+
+// ---------- car and lost child
+function carSheet() {
+  const c = S.fam.car;
+  const canSave = S.gps && !S.manual;
+  openSheet(`<h2>🚗 De auto</h2>
+    ${c ? `<p class="small muted">Bewaard om ${new Date(c.t).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}${c.note ? ` · ${esc(c.note)}` : ''} · ${mins(walkOf(c))} stappen</p>
+      <button class="primary big" data-go="carguide">🧭 Breng me naar de auto</button>` : '<p class="small muted">Bewaar waar de auto staat als je hem parkeert. Vanavond brengt de pijl je terug, ook in het donker.</p>'}
+    <label style="display:block;margin:12px 0 6px"><span class="small muted">Notitie (bv. rij C12)</span>
+      <input type="text" id="carNote" maxlength="60" value="${esc(c?.note || '')}" style="width:100%;min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--surface);padding:8px 10px"></label>
+    <div class="row2"><button ${canSave ? '' : 'disabled'} data-go="carsave">📍 ${c ? 'Opnieuw bewaren' : 'Auto staat hier'}</button><button data-go="sheetclose">Sluiten</button></div>
+    ${canSave ? '' : '<p class="small muted">Zet locatie aan om de plek te bewaren.</p>'}`);
+}
+async function lostSheet() {
+  const photos = (await idb.all('photos')).sort((a, b) => b.t - a.t);
+  const today = photos.filter((x) => new Date(x.t).toDateString() === new Date().toDateString());
+  openSheet(`<h2>🆘 Kind kwijt?</h2>
+    <ol class="steps"><li><b>Blijf waar je bent</b> en spreek meteen een <b>Walibi-medewerker</b> aan. Zij hebben een procedure voor verloren kinderen.</li>
+      <li>Toon de <b>foto van vandaag</b> hieronder (kleren!).</li>
+      <li>Bel je partner. ${S.fam.positions && Object.keys(S.fam.positions).length > 1 ? 'Hun laatste plek staat op de kaart.' : ''}</li>
+      <li>Leer je kinderen vooraf: <b>blijf staan en zoek iemand in Walibi-kleren</b>.</li></ol>
+    ${today.length ? `<div class="photos">${today.map((x) => `<img src="${x.data}" alt="Foto van vandaag">`).join('')}</div>` : '<p class="small muted">Nog geen foto van vandaag. Neem er ’s morgens één van de kinderen: dan zie je precies welke kleren ze aanhebben.</p>'}
+    <label class="filebtn"><input type="file" id="photoIn" accept="image/*" capture="environment" hidden><span>📸 Foto van de kinderen nemen</span></label>
+    <p class="small muted">Foto’s blijven alleen op deze gsm en worden niet geüpload. Tip: schrijf je gsm-nummer op de arm of een polsbandje van de kinderen.</p>
+    <button data-go="sheetclose" style="width:100%;margin-top:8px">Sluiten</button>`);
+}
+async function savePhoto(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = bmp.width * k; c.height = bmp.height * k;
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  await idb.put('photos', { id: rnd(12), t: Date.now(), data: c.toDataURL('image/jpeg', 0.8) });
+  // keep only the last 6 photos
+  const all = (await idb.all('photos')).sort((a, b) => b.t - a.t);
+  for (const x of all.slice(6)) await idb.del('photos', x.id);
+  lostSheet();
+}
+
 // ---------- banners
 const isDark = () => { const d = new Date(); const h = d.getHours() + d.getMinutes() / 60; const m = d.getMonth(); return (m >= 9 || m <= 1) ? h >= 17.2 || h < 7.5 : h >= 21; };
 function renderBanners() {
   const b = [];
-  if (S.offline) b.push(['offline', '📶', '<b>Geen verbinding.</b> Ik toon de laatste gegevens.']);
+  if (S.auth) b.push(['auth', '🔒', '<b>Opnieuw inloggen nodig.</b> <button class="x" data-go="relogin" style="text-decoration:underline">Log in</button>']);
+  if (S.offline) b.push(['offline', '📶', `<b>Geen bereik.</b> De app werkt verder met de laatste gegevens${S.live?.t ? ` (wachttijden van ${new Date(S.live.t).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })})` : ''}.${S.outbox.length ? ` ${S.outbox.length} wijziging(en) wachten om verstuurd te worden.` : ''}`]);
   if (!S.manual && S.sim === 'far') b.push(['far', '📍', '<b>Je bent niet in Walibi.</b> Ik reken vanaf de ingang.']);
   if (!S.manual && S.sim === 'off') b.push(['off', '📍', '<b>Locatie staat uit.</b> Ik reken vanaf de ingang. Zet locatie aan voor de wandelgids.']);
   if (S.manual) b.push(['manual', '📍', 'Je hebt je positie zelf gekozen op de kaart.']);
   const L = S.live;
   if (L && L.open && Date.now() < L.open) b.push(['before', '🕙', `Walibi opent om <b>${new Date(L.open).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}</b>.`]);
   else if (L && (!L.open || Date.now() > L.close)) b.push(['closed', '🌙', 'Walibi is nu gesloten. Wachttijden zijn van de laatste meting.']);
+  if (L?.close && Date.now() < L.close && L.close - Date.now() <= 45 * 60e3) {
+    b.push(['closing', '⏰', `<b>Nog ${Math.round((L.close - Date.now()) / 60e3)} min open.</b> Tijd voor de laatste ronde${S.fam?.car ? ', daarna brengt 🚗 Auto je terug' : ''}.`]);
+  }
   if (isDark() && new Date().getMonth() >= 9 && people().some((p) => p.kind === 'child' && p.height < 110) && !S.dismissed['night' + new Date().toDateString()]) {
     b.push(['night' + new Date().toDateString(), '🎃', '<b>Het is donker:</b> griezelacteurs en scare zones. Met de peuter: blijf op de brede hoofdpaden en volg de bordjes. Steek je hand op of zeg “stop” als het te eng wordt.', 'night']);
   }
@@ -544,14 +733,15 @@ function renderBanners() {
   if (L) {
     const age = Math.round((Date.now() - L.t) / 60e3);
     pill.textContent = `Live · ${new Date(L.t).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}${L.close && Date.now() < L.close ? ` · open tot ${new Date(L.close).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}` : ''}`;
-    pill.classList.toggle('stale', age > 5);
+    pill.classList.toggle('stale', age > 5 || S.liveStale);
   } else pill.textContent = 'Geen live data';
 }
 
 function render() {
   renderBanners();
-  for (const t of ['now', 'map', 'list', 'fam']) $('#view-' + t).hidden = S.tab !== t;
+  for (const t of ['now', 'map', 'list', 'tickets', 'fam']) $('#view-' + t).hidden = S.tab !== t;
   document.querySelectorAll('.tabs button').forEach((b) => (b.dataset.tab === S.tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
+  if (S.tab === 'tickets' && !document.activeElement?.closest('#view-tickets input, #view-tickets select')) renderTickets();
   if (!S.fam) return;
   if (S.tab === 'now') renderNow();
   if (S.tab === 'map') renderMapView();
@@ -570,6 +760,8 @@ document.addEventListener('click', async (e) => {
   const d = t.dataset;
   if (S.placing && t.closest('#bigmap')) return; // handled by map placement below
   if (d.tab) { S.tab = d.tab; buzz(); render(); scrollTo(0, 0); return; }
+  if (d.tview) { openViewer(+d.tview); return; }
+  if (d.tdel) { if (confirm('Dit ticket verwijderen?')) { await idb.del('tickets', d.tdel); api(`/api/tickets/${S.famId}/${d.tdel}`, { method: 'DELETE' }).catch(() => {}); S.tickets = S.tickets.filter((x) => x.id !== d.tdel); renderTickets(); } return; }
   if (d.tabGo) { S.tab = d.tabGo; render(); return; }
   if (d.me) { await act({ type: 'me', device, person: d.me }); toast('Top! 👋'); return; }
   if (d.filter) { S.filter = d.filter; renderList(); return; }
@@ -603,6 +795,15 @@ document.addEventListener('click', async (e) => {
     case 'pause': await act({ type: 'pause' }); { const f = foodOptions(walkOf).find((o) => o.f.seat); toast(`🪑 Rust goed!${f ? ` Zitplaatsen: ${f.f.name} (${mins(f.walkM)})` : ''}`); } break;
     case 'ate': await act({ type: 'ate' }); closeSheet(); if (S.guide) closeGuide(); toast('Smakelijk! 😋'); break;
     case 'sheetclose': closeSheet(); break;
+    case 'tvclose': closeViewer(); break;
+    case 'tvprev': tv.i = Math.max(0, tv.i - 1); tv.page = false; drawViewer(); break;
+    case 'tvnext': tv.i = Math.min(S.tickets.length - 1, tv.i + 1); tv.page = false; drawViewer(); break;
+    case 'tvpage': tv.page = !tv.page; drawViewer(); break;
+    case 'car': carSheet(); break;
+    case 'carsave': if (S.gps) { await act({ type: 'car', lat: S.gps.lat, lon: S.gps.lon, note: $('#carNote')?.value || '' }); toast('🚗 Plek bewaard'); closeSheet(); } break;
+    case 'carguide': { const c = S.fam.car; closeSheet(); openGuide({ kind: 'car', id: 'car', name: 'De auto', icon: '🚗', lat: c.lat, lon: c.lon }); break; }
+    case 'lost': lostSheet(); break;
+    case 'relogin': location.reload(); break;
     case 'compass': if (await enableCompass(true)) { toast('🧭 Kompas aan'); setTimeout(() => updateGuide(true), 600); } else toast('Kompas niet beschikbaar op dit toestel'); break;
     case 'zoom': S.mapZoom = !S.mapZoom; renderMapView(); break;
     case 'place': S.placing = !S.placing; renderMapView(); break;
@@ -620,11 +821,21 @@ document.addEventListener('click', async (e) => {
   }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { if (!$('#sheet').hidden) closeSheet(); else if (S.guide) closeGuide(); }
+  if (e.key === 'Escape') { if (!$('#tview').hidden) closeViewer(); else if (!$('#sheet').hidden) closeSheet(); else if (S.guide) closeGuide(); }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('g.pin[data-ride]')) { e.preventDefault(); rideSheet(e.target.dataset.ride); }
 });
 $('#sheetBack').addEventListener('click', closeSheet);
 document.addEventListener('change', async (e) => {
+  if (e.target.id === 'tfile') { importTickets([...e.target.files]); return; }
+  if (e.target.id === 'photoIn' && e.target.files[0]) { savePhoto(e.target.files[0]).catch(() => toast('Foto bewaren lukte niet')); return; }
+  const tid = e.target.dataset.tname || e.target.dataset.tperson;
+  if (tid) {
+    const t = S.tickets.find((x) => x.id === tid); if (!t) return;
+    const patch = e.target.dataset.tname ? { name: e.target.value.slice(0, 40) } : { person: e.target.value || null };
+    Object.assign(t, patch); await idb.put('tickets', t);
+    if (!t.pending) api(`/api/tickets/${S.famId}/${t.id}`, { method: 'PATCH', body: patch }).catch(() => { t.pending = true; idb.put('tickets', t); });
+    return;
+  }
   if (e.target.dataset.pref) {
     const p = pushPrefs(); p[e.target.dataset.pref] = e.target.checked; store.set('pushPrefs', p);
     api('/api/push', { method: 'POST', body: { device, family: S.famId, prefs: p } }).catch(() => toast('Opslaan lukte niet'));
@@ -650,24 +861,37 @@ document.addEventListener('pointerup', (e) => {
   S.manual = { ...ll, t: Date.now() }; store.set('manual', S.manual); S.placing = false;
   recompute(); render(); toast('📍 Positie gezet');
 });
+let swipeX = null;
+document.addEventListener('touchstart', (e) => { if (e.target.closest('#tview')) swipeX = e.touches[0].clientX; }, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (swipeX == null) return;
+  const dx = e.changedTouches[0].clientX - swipeX; swipeX = null;
+  if (Math.abs(dx) > 60) { tv.i = Math.max(0, Math.min(S.tickets.length - 1, tv.i + (dx < 0 ? 1 : -1))); tv.page = false; drawViewer(); }
+});
+addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadLive(); pollFamily(); if (S.guide) wake(true); } });
 
 // ---------- start
 (async function start() {
+  S.outbox = store.get('outbox', []);
+  S.tickets = await idb.all('tickets');
   render();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   try {
     const [parkData, url] = await Promise.all([fetch('park.json').then((r) => r.json()), loadFamily()]);
     S.park = makePark(parkData);
     startGps();
     if (typeof window.DeviceOrientationEvent?.requestPermission !== 'function') enableCompass(false);
     await loadLive();
+    flushOutbox(); syncTickets();
     const go = url.searchParams.get('go');
     if (go && byId[go]) { S.tab = 'now'; render(); rideSheet(go); }
     if (url.searchParams.get('food')) foodSheet();
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if (url.searchParams.get('tickets')) { S.tab = 'tickets'; render(); }
   } catch (err) {
     console.error(err);
-    $('#view-now').innerHTML = '<div class="card"><h2>Oei, dat lukte niet</h2><p class="muted">Geen verbinding met de server. Herlaad de pagina.</p><button class="primary" onclick="location.reload()">Opnieuw</button></div>';
+    $('#view-now').innerHTML = `<div class="card"><h2>${S.auth ? 'Even opnieuw inloggen' : 'Oei, dat lukte niet'}</h2><p class="muted">${S.auth ? 'Je sessie is verlopen.' : 'Geen verbinding en nog geen opgeslagen gegevens op deze gsm.'}</p><button class="primary" data-go="relogin">Opnieuw</button></div>`
+      + (S.tickets.length ? '<button class="primary big" data-tab="tickets">🎟️ Toon onze tickets</button>' : '');
   }
   setInterval(loadLive, 60e3);
   setInterval(pollFamily, 15e3);

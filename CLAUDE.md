@@ -1,6 +1,7 @@
 # Pretpark — notes for future sessions
 
-Live at https://pretpark.pieterverlinden.be (unlisted, noindex). A family day planner for Walibi Belgium, built for
+Live at https://pretpark.pieterverlinden.be, behind Cloudflare Access (e-mail one-time code) for
+pieter.verlinden@outlook.com and marjan.vandenabeele@gmail.com only; noindex. A family day planner for Walibi Belgium, built for
 one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm), but people are editable in the app.
 
 ## Spec (short)
@@ -12,6 +13,22 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
 - Shared family state between phones via a secret family link (`?g=<id>`), plus Web Push notifications
   (favourite got short, better suggestion, meal/rest time, target ride down), sent by a cron every minute.
 
+- Tickets tab: import e-ticket PDFs/screenshots; every QR/barcode becomes a ticket with a sharp crop of the code and
+  a page image; full-screen white viewer for the gate. Stored in IndexedDB (works offline) and shared via D1.
+- Offline: service worker pre-caches the app + park map; app.js keeps the last live data and family state in
+  localStorage and queues family actions in an outbox (applied locally with family.js, replayed when online).
+- Extras: car parking spot (shared, guide back), "Kind kwijt?" sheet with today's photo (local only, never uploaded),
+  MET Norway weather (rain → indoor rides favoured), closing-time banner + notification.
+
+## Access (security)
+- Access app "Pretpark" (id 314d5541-…, AUD in worker/access.js) on the whole host, policy "Gezin" = the two e-mails,
+  IdP = one-time PIN, session 720 h. A second Access app bypasses only /manifest.webmanifest, /icon.svg and
+  /apple-touch-icon.png (home-screen install fetches these without cookies).
+- worker/access.js verifies the Access JWT again for every /api call (team pieterverlinden.cloudflareaccess.com).
+  To add a person: add the e-mail to the Access policy (cf zero-trust access applications update) AND to ALLOWED.
+- Local dev skips the check only for plain-http loopback requests without cf-ray.
+- An expired session makes /api return a redirect; app.js shows "Opnieuw inloggen".
+
 ## Stack and layout
 - Plain HTML/CSS/JS in `public/` (no build) + one Cloudflare Worker (`worker/`) with D1 and a `* * * * *` cron.
 - `public/data.js` attractions (ThemeParks.wiki ids + coords, walibi.be height rules, my pregnancy guesses: `preg`)
@@ -20,19 +37,23 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
 - `public/logic.js` planner + notification decisions (pure; imported by both browser and Worker).
 - `public/family.js` the shared state and validated actions (applied server-side with optimistic concurrency).
 - `public/route.js` Dijkstra over the footpath graph, lookahead point for the arrow.
-- `public/app.js` UI; `public/sw.js` push display only (no offline cache).
+- `public/app.js` UI; `public/sw.js` offline cache + push. **Bump `VERSION` in sw.js on every deploy** that changes
+  files in public/, so phones switch to the new set of files together.
+- `public/tickets.js` import (lazy-loads `public/vendor/`: pdf.js 4.10.38, zxing-wasm 1.3.4 reader); `public/idb.js`.
 - `worker/index.js` `/api/live` (ThemeParks.wiki, cached 60 s), `/api/family`, `/api/push`, `/api/vapid`, cron.
 - `worker/push.js` Web Push (VAPID ES256 + aes128gcm) with WebCrypto, no library.
+- `worker/access.js` Access JWT check. `/api/tickets/<family>[/<id>]` GET/POST/PATCH/DELETE (max 20, ≤1.9 MB each).
 
 ## Run, test, deploy
 - `npm run dev` (needs `.dev.vars` with `VAPID_PRIVATE_JWK='<jwk json>'`; generate a P-256 ECDSA key if missing).
 - `npm test` (node:test on logic + family actions).
 - D1 database `pretpark-eu` (EU jurisdiction), bound by name in cloudflare.config.ts.
-- `npm run deploy` — first time, or when the key changes: `npx cf deploy --secrets-file .dev.vars`.
+- `npm run deploy`. Secrets persist; to (re)upload the VAPID key: `npx cf deploy --secrets-file .secrets`
+  (`.secrets` and `.dev.vars` are git-ignored and hold the same key).
   Changing the VAPID key invalidates all existing push subscriptions.
 
 ## Data
-D1 tables `families` (id, JSON state incl. last positions of each phone, done list, favourites) and `subs`
+D1 tables `tickets` (code crop + page image per ticket), `families` (id, JSON state incl. last positions of each phone, done list, favourites) and `subs`
 (push subscription per device + prefs + notification memo). Everything older than 7 days is deleted by the cron.
 No accounts; knowing the family id is the access.
 

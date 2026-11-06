@@ -51,14 +51,14 @@ h1, h2, h3 { font-family: var(--display); font-weight: 600; margin: 0; line-heig
 .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
 .live.stale::before { background: var(--mid); }
 main { max-width: 720px; margin: 0 auto; padding: 4px var(--gutter) calc(96px + env(safe-area-inset-bottom)); }
-.tabs { position: fixed; bottom: 0; left: 0; right: 0; z-index: 6; display: grid; grid-template-columns: repeat(4, 1fr);
+.tabs { position: fixed; bottom: 0; left: 0; right: 0; z-index: 6; display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--line); padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); }
 .tabs button { border: 0; border-radius: 14px; background: transparent; display: flex; flex-direction: column; align-items: center; gap: 0;
   font-size: .78rem; padding: 6px 0; color: var(--muted); min-height: 54px; }
 .tabs button span { font-size: 1.3rem; line-height: 1.2; }
 .tabs button[aria-current="page"] { color: var(--ink); font-weight: 700; background: var(--surface-2); }
 @media (min-width: 900px) {
-  .tabs { left: 50%; right: auto; transform: translateX(-50%); width: 480px; bottom: 16px; border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); padding: 4px; }
+  .tabs { left: 50%; right: auto; transform: translateX(-50%); width: 560px; bottom: 16px; border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); padding: 4px; }
 }
 
 /* ---------- banners */
@@ -187,3 +187,33 @@ label.tog input { width: 22px; height: 22px; accent-color: var(--accent); }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 .empty { text-align: center; padding: 30px 10px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---------- weather line */
+.wx { margin: 8px 4px 0; font-size: .92rem; color: var(--muted); }
+.wx b { color: var(--ink); font-family: var(--display); }
+
+/* ---------- tickets */
+.tlist { display: grid; gap: 10px; }
+.tcard { display: grid; grid-template-columns: 84px 1fr auto; gap: 12px; align-items: center; background: var(--surface); border-radius: 16px; padding: 10px; box-shadow: var(--shadow); }
+.tthumb { width: 84px; height: 84px; padding: 4px; border-radius: 12px; background: #fff; border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; font-size: 2rem; }
+.tthumb img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+.tthumb img.page { image-rendering: auto; }
+.tinfo { display: grid; gap: 6px; min-width: 0; }
+.tinfo input, .tinfo select { width: 100%; min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); padding: 6px 10px; font-weight: 600; }
+.filebtn { display: flex; align-items: center; justify-content: center; min-height: 54px; margin: 14px 0 8px; border-radius: 999px; border: 2px dashed var(--accent); color: var(--accent); font-weight: 700; cursor: pointer; }
+.filebtn:focus-within { outline: 3px solid var(--plum); outline-offset: 2px; }
+.tview { position: fixed; inset: 0; z-index: 50; background: #fff; color: #111; display: flex; flex-direction: column; align-items: center;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 14px); color-scheme: light; }
+.tv-top { width: 100%; display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: #555; }
+.tv-top button, .tv-nav button { background: #f2f2f2; border-color: #ddd; color: #111; }
+.tv-who { font-family: var(--display); font-size: 1.8rem; font-weight: 700; margin: 8px 0 4px; text-align: center; }
+.tv-code { flex: 1; width: 100%; display: grid; place-items: center; min-height: 0; }
+.tv-code img { width: min(92vw, 440px); max-height: 100%; object-fit: contain; image-rendering: pixelated; }
+.tv-code.page img { width: 100%; max-width: 560px; image-rendering: auto; }
+.tv-hint { color: #666; font-size: .9rem; margin: 6px 0; }
+.tv-nav { display: flex; gap: 8px; width: 100%; max-width: 480px; }
+.tv-nav button { flex: 1; }
+
+/* ---------- lost child */
+.photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 10px 0; }
+.photos img { width: 100%; border-radius: 12px; }

@@ -48,10 +48,15 @@ export function apply(fam, act, now) {
       const plan = act.plan;
       if (!plan || !Array.isArray(plan.parts) || plan.parts.length > 2) throw new Error('bad plan');
       if (!plan.parts.every((p) => p.rest || okId(p.id))) throw new Error('bad plan');
-      f.target = { plan: JSON.parse(JSON.stringify(plan).slice(0, 4000)), setAt: now, by: str(act.device, 32) };
+      const text = JSON.stringify(plan);
+      if (text.length > 4000) throw new Error('bad plan');
+      f.target = { plan: JSON.parse(text), setAt: now, by: str(act.device, 32) };
       break;
     }
     case 'untarget': f.target = null; break;
+    case 'car':
+      f.car = act.lat == null ? null : { lat: num(act.lat, -90, 90, 0), lon: num(act.lon, -180, 180, 0), t: now, note: str(act.note, 60) };
+      break;
     case 'ate': f.ate = now; break;
     case 'pause': f.pause = now; break;
     case 'pos':

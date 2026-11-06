@@ -79,8 +79,16 @@ export function status(live, id) {
   return { open: r.s === 'OPERATING', wait: r.w ?? null, known: true, s: r.s };
 }
 
+// ---------- weather (MET Norway, in live.weather: { now: {t, mm, p, sym}, hours: [{h, t, mm, p, sym}] })
+export function raining(live) {
+  const w = live?.weather?.now;
+  return !!w && ((w.mm ?? 0) >= 0.2 || /rain|sleet|thunder/.test(w.sym || ''));
+}
+export const WX_ICON = (sym = '') => /thunder/.test(sym) ? '⛈️' : /snow|sleet/.test(sym) ? '🌨️' : /rain/.test(sym) ? '🌧️'
+  : /fog/.test(sym) ? '🌫️' : /^cloudy/.test(sym) ? '☁️' : /partly|fair/.test(sym) ? '🌤️' : /clearsky_night/.test(sym) ? '🌙' : /clear/.test(sym) ? '☀️' : '🌡️';
+
 // ---------- the planner
-// ctx = { people, favs:[id], done:{id:n}, live, walk:(attraction)=>meters, minutesLeft, month }
+// ctx = { people, favs:[id], done:{id:n}, live, walk:(attraction)=>meters, minutesLeft, month, rain }
 function scoreOne(group, a, ctx, extraWalkM = 0) {
   const st = status(ctx.live, a.id);
   if (!st.open) return null;
@@ -91,6 +99,7 @@ function scoreOne(group, a, ctx, extraWalkM = 0) {
   const done = ctx.done?.[a.id] || 0;
   value *= Math.pow(0.35, done);
   if (ctx.favs?.includes(a.id)) value *= 2;
+  if (ctx.rain) value *= a.indoor ? 1.6 : a.wet ? 0.5 : 0.85; // raining now: prefer indoor rides
   if (value <= 0.2) return null;
   const walkM = ctx.walk(a) + extraWalkM;
   const wait = st.wait ?? 10;
@@ -180,7 +189,7 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   const fresh = pos && now - pos.t < 45 * 60e3;
   const here = fresh ? pos : null;
   const walk = (x) => (here ? distM(here, x) * PATH_FACTOR : 400);
-  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft };
+  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live) };
   const since = (k) => now - (memo.sent[k] || 0);
   const quiet = since('any') < 8 * 60e3;
   const nm = (id) => byId[id]?.name || 'attractie';
@@ -216,6 +225,12 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   // remember the highest wait since the last message, so a slow drop over an hour still counts
   for (const id of ctx.favs) { const st = status(live, id); if (st.wait != null) memo.w[id] = Math.max(memo.w[id] ?? st.wait, st.wait); }
 
+  // 2b. closing soon: last round, and how far the exit is
+  if (!notes.length && live.minutesLeft != null && live.minutesLeft <= 45 && live.minutesLeft > 15 && memo.closing !== new Date(now).toDateString()) {
+    memo.closing = new Date(now).toDateString();
+    const best = plans({ ...ctx, minutesLeft: live.minutesLeft - 10 })[0];
+    notes.push({ tag: 'closing', title: `⏰ Nog ${live.minutesLeft} min open`, body: best ? `Laatste ronde: ${describe(best, people)}. Daarna richting uitgang${fam.car ? ' en auto' : ''}.` : 'Tijd om richting uitgang te gaan.', url: '/' });
+  }
   const date = new Date(now);
   const local = live.localTime ? new Date(live.localTime) : date;
   // 3. time to eat

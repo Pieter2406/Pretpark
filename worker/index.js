@@ -2,7 +2,10 @@
 // - /api/live: Walibi Belgium wait times (ThemeParks.wiki), cached 60 s
 // - /api/family: the shared family state (D1), changed through validated actions
 // - /api/push: Web Push subscriptions; a cron every minute decides and sends notifications
+// - /api/tickets: imported admission tickets (code crop + page image), shared by the family
+// Everything is behind Cloudflare Access (e-mail code) and checked again here (access.js).
 import { newFamily, apply } from '../public/family.js';
+import { accessEmail } from './access.js';
 import { decideNotifications } from '../public/logic.js';
 import { sendPush, publicKey } from './push.js';
 
@@ -18,6 +21,8 @@ export default {
     const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
     try {
       if (parts[1] === 'health') return json({ ok: true });
+      if (!(await accessEmail(request))) return json({ error: 'auth' }, 401);
+      if (parts[1] === 'tickets') return await tickets(request, env, parts[2], parts[3]);
       if (parts[1] === 'live') return json(await getLive(ctx));
       if (parts[1] === 'vapid') return json({ key: env.VAPID_PRIVATE_JWK ? publicKey(env) : null });
       if (parts[1] === 'family') return await family(request, env, parts[2]);
@@ -42,9 +47,10 @@ async function getLive(ctx) {
   const key = new Request('https://cache.pretpark/live-v1');
   const hit = await cache.match(key);
   if (hit) return hit.json();
-  const [live, sched] = await Promise.all([
+  const [live, sched, wx] = await Promise.all([
     fetch(`https://api.themeparks.wiki/v1/entity/${DEST}/live`).then((r) => (r.ok ? r.json() : null)),
     fetch(`https://api.themeparks.wiki/v1/entity/${DEST}/schedule`, { cf: { cacheTtl: 3600 } }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    getWeather(),
   ]);
   if (!live) throw fail(502, 'live data unavailable');
   const rides = {};
@@ -60,9 +66,29 @@ async function getLive(ctx) {
     t: now, rides, open, close,
     minutesLeft: close ? Math.max(0, Math.round((close - now) / 60e3)) : null,
     localTime: brusselsLocal(now),
+    weather: wx,
   };
   ctx?.waitUntil?.(cache.put(key, new Response(JSON.stringify(out), { headers: { 'cache-control': 'max-age=60' } })));
   return out;
+}
+// Weather from MET Norway (free, asks for an identifying User-Agent). Kept 20 minutes in this isolate.
+let wxCache = null;
+async function getWeather() {
+  if (wxCache && Date.now() - wxCache.t < 20 * 60e3) return wxCache.v;
+  try {
+    const r = await fetch('https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=50.70&lon=4.59',
+      { headers: { 'user-agent': 'pretpark.pieterverlinden.be (family day planner)' }, cf: { cacheTtl: 1200 } });
+    if (!r.ok) return wxCache?.v ?? null;
+    const d = await r.json();
+    const rows = (d.properties?.timeseries || []).filter((x) => x.data?.next_1_hours).slice(0, 36).map((x) => {
+      const n = x.data.next_1_hours;
+      const mm = n.details?.precipitation_amount ?? 0;
+      return { h: x.time, t: x.data.instant.details.air_temperature, mm, p: n.details?.probability_of_precipitation ?? (mm >= 0.1 ? 70 : 0), sym: n.summary?.symbol_code || '' };
+    });
+    const v = rows.length ? { now: rows[0], hours: rows } : null;
+    wxCache = { t: Date.now(), v };
+    return v;
+  } catch { return wxCache?.v ?? null; }
 }
 const brusselsDate = (t) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Brussels' }).format(t);
 // Brussels wall-clock time written as if it were UTC: the Worker runs in UTC, so getHours() gives the Brussels hour
@@ -76,6 +102,7 @@ let ready = null;
 function schema(env) {
   ready ??= env.DB.batch([
     env.DB.prepare('CREATE TABLE IF NOT EXISTS families (id TEXT PRIMARY KEY, data TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY, family TEXT NOT NULL, meta TEXT NOT NULL, crop TEXT, page TEXT, created INTEGER NOT NULL)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS subs (device TEXT PRIMARY KEY, family TEXT NOT NULL, sub TEXT NOT NULL, prefs TEXT NOT NULL, memo TEXT NOT NULL, updated INTEGER NOT NULL)'),
   ]).catch((err) => { ready = null; throw err; });
   return ready;
@@ -146,11 +173,53 @@ async function push(request, env) {
   return json({ ok: true, prefs });
 }
 
+// ---------- tickets: { id, meta: { name, person, code, format, page: n, source }, crop: dataURL png, page: dataURL jpeg }
+const okDataUrl = (s, type, max) => s == null || (typeof s === 'string' && s.startsWith(`data:${type};base64,`) && s.length <= max);
+async function tickets(request, env, fam, id) {
+  await schema(env);
+  if (!okFamily(fam)) throw fail(400, 'bad family');
+  const exists = await env.DB.prepare('SELECT 1 FROM families WHERE id = ?').bind(fam).first();
+  if (!exists) throw fail(404, 'no-family');
+  if (request.method === 'GET') {
+    const { results } = await env.DB.prepare('SELECT id, meta, crop, page, created FROM tickets WHERE family = ? ORDER BY created').bind(fam).all();
+    return json(results.map((r) => ({ id: r.id, ...JSON.parse(r.meta), crop: r.crop, page: r.page, created: r.created })));
+  }
+  if (request.method === 'DELETE') {
+    await env.DB.prepare('DELETE FROM tickets WHERE family = ? AND id = ?').bind(fam, String(id)).run();
+    return json({ ok: true });
+  }
+  const text = await request.text();
+  if (text.length > 1_900_000) throw fail(413, 'ticket too big');
+  let t; try { t = JSON.parse(text); } catch { throw fail(400, 'bad json'); }
+  const meta = {
+    name: String(t.name ?? '').slice(0, 40), person: /^p\d{1,2}$/.test(t.person) ? t.person : null,
+    code: t.code == null ? null : String(t.code).slice(0, 2000), format: String(t.format ?? '').slice(0, 30),
+    source: String(t.source ?? '').slice(0, 80), pageNo: Number(t.pageNo) || 1,
+  };
+  if (request.method === 'PATCH') {
+    const row = await env.DB.prepare('SELECT meta FROM tickets WHERE family = ? AND id = ?').bind(fam, String(id)).first();
+    if (!row) throw fail(404, 'no ticket');
+    const old = JSON.parse(row.meta);
+    const next = { ...old, ...(t.name != null ? { name: meta.name } : {}), ...('person' in t ? { person: meta.person } : {}) };
+    await env.DB.prepare('UPDATE tickets SET meta = ? WHERE family = ? AND id = ?').bind(JSON.stringify(next), fam, String(id)).run();
+    return json({ ok: true });
+  }
+  if (request.method !== 'POST') throw fail(405, 'method not allowed');
+  if (!/^[a-z0-9]{8,32}$/.test(t.id)) throw fail(400, 'bad id');
+  if (!okDataUrl(t.crop, 'image/png', 900_000) || !okDataUrl(t.page, 'image/jpeg', 900_000)) throw fail(400, 'bad image');
+  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM tickets WHERE family = ?').bind(fam).first();
+  if (n.n >= 20) throw fail(400, 'too many tickets');
+  await env.DB.prepare('INSERT OR REPLACE INTO tickets (id, family, meta, crop, page, created) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(t.id, fam, JSON.stringify(meta), t.crop ?? null, t.page ?? null, Date.now()).run();
+  return json({ ok: true }, 201);
+}
+
 // ---------- cron: every minute
 async function notifyAll(env, ctx) {
   await schema(env);
   const now = Date.now();
   await env.DB.prepare('DELETE FROM subs WHERE family IN (SELECT id FROM families WHERE created < ?)').bind(now - KEEP_DAYS * 864e5).run();
+  await env.DB.prepare('DELETE FROM tickets WHERE family IN (SELECT id FROM families WHERE created < ?)').bind(now - KEEP_DAYS * 864e5).run();
   await env.DB.prepare('DELETE FROM families WHERE created < ?').bind(now - KEEP_DAYS * 864e5).run();
   if (!env.VAPID_PRIVATE_JWK) return;
   const { results } = await env.DB.prepare(
