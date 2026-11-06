@@ -3,7 +3,7 @@
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
 import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON } from './logic.js';
 import { makePark, pathLength, bearingXY } from './route.js';
-import { apply } from './family.js';
+import { apply, phoneOf } from './family.js';
 import { idb } from './idb.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -614,6 +614,7 @@ function renderFam() {
         <div class="person" data-id="${p.id}" data-kind="${p.kind}">
           <label><span class="small muted">${emoji(p)} Naam</span><input type="text" name="name" value="${esc(p.name)}" maxlength="24" autocomplete="off"></label>
           <label><span class="small muted">Lengte (cm)</span><input type="number" name="height" value="${num(p.height)}" min="50" max="220" inputmode="numeric"></label>
+          <label class="phone"><span class="small muted">📱 Gsm-nummer${p.kind === 'child' ? ' (als ' + esc(p.name) + ' een eigen gsm heeft)' : ' (optioneel)'}</span><input type="tel" name="phone" value="${esc(p.phone || '')}" placeholder="+32 4xx xx xx xx" autocomplete="off" inputmode="tel"></label>
           ${p.kind === 'adult' ? `<div class="opts"><label class="tog"><input type="checkbox" name="pregnant" ${p.pregnant ? 'checked' : ''}> Zwanger</label></div>` : ''}
         </div>`).join('')}
         <button class="primary" type="submit" style="margin-top:8px">Opslaan</button></form></div>
@@ -1149,10 +1150,18 @@ async function lostSheet() {
   const photos = ((await idb.all('photos')) || []).sort((a, b) => b.t - a.t);
   const today = photos.filter((x) => new Date(x.t).toDateString() === new Date().toDateString());
   const partner = Object.entries(S.fam.positions || {}).some(([d, p]) => d !== device && Date.now() - p.t < 15 * 60e3);
+  const ps = people();
+  const kids = ps.filter((p) => p.kind === 'child' && phoneOf(p.phone));
+  const others = ps.filter((p) => p.kind === 'adult' && p.id !== meId() && phoneOf(p.phone));
+  const sms = encodeURIComponent('Waar ben je? Blijf staan waar je bent en zoek iemand in Walibi-kleren. Ik kom eraan!');
+  const callRow = (p, primary) => { const n = phoneOf(p.phone); return `<div class="callrow"><a class="btn ${primary ? 'primary' : ''}" href="tel:${n}">📞 Bel ${esc(p.name)}</a><a class="btn" href="sms:${n}?&body=${sms}">💬 Sms</a></div>`; };
+  const calls = kids.map((p) => callRow(p, true)).join('') + others.map((p) => callRow(p, false)).join('');
   openSheet(`<h2>🆘 Kind kwijt?</h2>
+    ${calls ? `<div class="calls">${calls}</div>` : ''}
+    ${ps.some((p) => p.kind === 'child') && !kids.length ? '<p class="small muted">Heeft een kind een eigen gsm? Vul het nummer in bij <button class="linkbtn" data-tab="fam">Gezin</button>, dan kun je hier met één tik bellen.</p>' : ''}
     <ol class="steps"><li><b>Blijf waar je bent</b> en spreek meteen een <b>Walibi-medewerker</b> aan. Zij hebben een procedure voor verloren kinderen.</li>
       <li>Toon de <b>foto van vandaag</b> hieronder (kleren!).</li>
-      <li>Bel je partner.${partner ? ' Hun laatste plek staat op de kaart (paarse stip).' : ''}</li>
+      <li>${kids.length ? 'Bel je kind (knop hierboven), en bel' : 'Bel'} je partner.${partner ? ' Hun laatste plek staat op de kaart (paarse stip).' : ''}</li>
       <li>Leer je kinderen vooraf: <b>blijf staan en zoek iemand in Walibi-kleren</b>.</li></ol>
     ${today.length ? `<div class="photos">${today.map((x) => `<img src="${imgSrc(x.data)}" alt="Foto van vandaag">`).join('')}</div>` : '<p class="small muted">Nog geen foto van vandaag. Neem er ’s morgens één van de kinderen: dan zie je precies welke kleren ze aanhebben.</p>'}
     <label class="filebtn"><input type="file" id="photoIn" accept="image/*" capture="environment" hidden><span>📸 Foto van de kinderen nemen</span></label>
@@ -1418,7 +1427,10 @@ document.addEventListener('submit', async (e) => {
     const ps = [...f.querySelectorAll('.person')].map((row) => ({
       id: row.dataset.id, kind: row.dataset.kind, name: row.querySelector('[name=name]').value,
       height: +row.querySelector('[name=height]').value, pregnant: !!row.querySelector('[name=pregnant]')?.checked,
+      phone: row.querySelector('[name=phone]')?.value || '',
     }));
+    const bad = [...f.querySelectorAll('[name=phone]')].find((i) => i.value.trim() && !phoneOf(i.value));
+    if (bad) { bad.focus(); toast('Dat gsm-nummer klopt niet (bv. +32 470 12 34 56)'); return; }
     document.activeElement?.blur();
     if (await act({ type: 'people', people: ps })) toast('Opgeslagen ✓');
   }

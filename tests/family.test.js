@@ -188,3 +188,19 @@ test('okDevice', () => {
   assert.ok(!okDevice('dev-1234567'));
   assert.ok(!okDevice(12345678));
 });
+
+test('phone numbers: cleaned, validated, optional', async () => {
+  const { apply, newFamily, phoneOf } = await import('../public/family.js');
+  assert.equal(phoneOf('+32 470 12 34 56'), '+32470123456');
+  assert.equal(phoneOf('0470/12.34.56'), '0470123456');
+  assert.equal(phoneOf('12'), '');
+  assert.equal(phoneOf('javascript:alert(1)'), '');
+  const f = apply(newFamily(1), { type: 'people', people: [
+    { id: 'p1', name: 'A', kind: 'adult', height: 180 },
+    { id: 'p3', name: 'Lotte', kind: 'child', height: 145, phone: '+32 470 12 34 56' },
+    { id: 'p4', name: 'Mats', kind: 'child', height: 95, phone: 'nope' },
+  ] }, 2);
+  assert.equal(f.people[1].phone, '+32470123456');
+  assert.ok(!('phone' in f.people[2]));
+  assert.ok(!('phone' in f.people[0]));
+});

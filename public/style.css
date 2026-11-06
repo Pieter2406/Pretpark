@@ -315,3 +315,12 @@ label.tog input { width: 22px; height: 22px; accent-color: var(--accent); }
 .mapseg { display: grid; grid-template-columns: 1fr 1fr; } .mapseg button { min-height: 40px; }
 .legend { font-size: .75rem; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
 .mapview { height: calc(100dvh - 300px); }
+
+/* phone numbers (Gezin) and call buttons (Kind kwijt?) */
+.person .phone { grid-column: 1 / -1; }
+.person .phone input { width: 100%; min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); padding: 8px 10px; }
+.calls { display: grid; gap: 8px; margin: 10px 0 6px; }
+.callrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.callrow .btn { justify-content: center; min-height: 52px; font-size: 1.05rem; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.linkbtn { display: inline; min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); font-weight: 700; text-decoration: underline; }

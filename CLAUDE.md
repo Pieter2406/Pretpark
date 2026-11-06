@@ -17,7 +17,8 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
   a page image; full-screen white viewer for the gate. Stored in IndexedDB (works offline) and shared via D1.
 - Offline: service worker pre-caches the app + park map; app.js keeps the last live data and family state in
   localStorage and queues family actions in an outbox (applied locally with family.js, replayed when online).
-- Extras: car parking spot (shared, guide back), "Kind kwijt?" sheet with today's photo (local only, never uploaded),
+- Extras: car parking spot (shared, guide back), "Kind kwijt?" sheet with today's photo (local only, never uploaded)
+  and one-tap call/SMS buttons for every person with a phone number (people[].phone, cleaned by phoneOf in family.js),
   MET Norway weather (rain → indoor rides favoured), closing-time banner + notification.
 
 - Album tab + 📸 button on Nu/Kaart: photos in original quality to R2 bucket `pretpark-photos` (EU jurisdiction),

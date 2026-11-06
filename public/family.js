@@ -16,6 +16,8 @@ export function newFamily(now) {
 }
 
 const str = (s, n = 40) => String(s ?? '').trim().slice(0, n);
+// keeps a leading + and digits only (spaces etc. dropped), 6–16 digits, else empty
+export const phoneOf = (x) => { const t = String(x ?? '').trim(); const d = (t.startsWith('+') ? '+' : '') + t.replace(/\D/g, ''); return /^\+?\d{6,16}$/.test(d) ? d : ''; };
 const num = (x, lo, hi, d) => { const v = Number(x); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
 const okId = (id) => typeof id === 'string' && !!byId[id]; // attraction or food (favourites, done list)
 const RIDES = new Set(ATTRACTIONS.map((a) => a.id));
@@ -86,6 +88,8 @@ export function apply(fam, act, now) {
         kind: p?.kind === 'child' ? 'child' : 'adult',
         height: num(p?.height, 50, 220, 120),
         pregnant: p?.kind !== 'child' && !!p?.pregnant,
+        // optional own phone number (a child with a phone, or the partner) for the "Kind kwijt?" sheet
+        ...(phoneOf(p?.phone) ? { phone: phoneOf(p.phone) } : {}),
       }));
       break;
     }
