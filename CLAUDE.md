@@ -102,6 +102,19 @@ No accounts; knowing the family id is the access.
   (the other phone gets "Breng me erheen"), send queue in localStorage `pp:chatq`, polls every 4 s while open.
   Messages are deleted after 30 days.
 
+## v5 visuals
+- Map pins: icon (or ride photo when zoomed in) in a ring coloured by wait, with a "15′" pill; closed / not-for-us
+  rides are small grey dots; the current target pulses. Labels avoid pins and each other (below, else above).
+  Landmarks: entrance, the big lake, the playground, the car. Food icons only when zoomed in; pins shrink when the
+  whole park is shown. Map controls and legend float on the map.
+- Ride photos: `public/photos.js` + `public/img/rides/*.jpg` (500 px, Wikimedia Commons, CC BY-SA/CC0/PD; author +
+  licence shown on every photo and listed under Gezin). Chosen by hand: only photos that show the ride as you see
+  it walking up. Missing: Tiki-Waka (rate-limited fetch), Mecalodon/Popcorn Revenge (unusable photos), Grand
+  Carrousel/Tapis Volant (none found). Commons rate-limits hard: fetch with long pauses (api.wikimedia.org search,
+  thumbnails only in standard sizes like 500px). Photos are cached by the service worker after first use and
+  prefetched once at start.
+- Photos appear on the plan card, alternatives, list, ride sheet and in the guide ("Zo ziet het eruit" within 250 m).
+
 ## Non-obvious decisions
 - Wait times only exist for rides ThemeParks.wiki reports; a ride missing from live data is treated as closed.
 - Score = family enjoyment (per person/category, watchers cost, wet rides penalised Oct–Mar, favourites ×2, done ×0.35ⁿ)

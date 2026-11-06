@@ -663,6 +663,7 @@ function renderFam() {
       <li><b>Android (Chrome):</b> menu ⋮ → <i>App installeren</i> of <i>Toevoegen aan startscherm</i>.</li></ul></div>
     <div class="card"><h2>✓ Vandaag gedaan</h2>
       ${Object.keys(S.fam.done || {}).length ? `<div class="list">${Object.entries(S.fam.done).map(([id, n]) => `<div class="ride" style="grid-template-columns:auto 1fr auto"><span aria-hidden="true">${byId[id]?.icon}</span><span><b>${esc(byId[id]?.name)}</b> <span class="muted">${num(n)}×</span></span><button data-undo="${id}">Ongedaan</button></div>`).join('')}</div>` : '<p class="muted small">Nog niets. Tik op “Gedaan” na een attractie.</p>'}</div>
+    <p class="muted small">Foto’s van attracties via Wikimedia Commons: ${[...new Set(Object.values(PHOTOS).map((p) => p.artist))].map(esc).join(', ')} (CC BY-SA 3.0/4.0, CC0, publiek domein; per foto vermeld).</p>
     <p class="muted small">Wachttijden: ThemeParks.wiki (live). Weer: MET Norway. Kaart: © OpenStreetMap-bijdragers. Foto’s blijven bewaard tot je ze verwijdert.</p>`;
   renderPush();
 }
