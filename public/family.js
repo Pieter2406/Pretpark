@@ -57,6 +57,7 @@ export function apply(fam, act, now) {
     case 'car':
       f.car = act.lat == null ? null : { lat: num(act.lat, -90, 90, 0), lon: num(act.lon, -180, 180, 0), t: now, note: str(act.note, 60) };
       break;
+    case 'walk': f.walk = act.pref === 'low' ? 'low' : 'normal'; break;
     case 'ate': f.ate = now; break;
     case 'pause': f.pause = now; break;
     case 'pos':

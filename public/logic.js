@@ -88,7 +88,10 @@ export const WX_ICON = (sym = '') => /thunder/.test(sym) ? '⛈️' : /snow|slee
   : /fog/.test(sym) ? '🌫️' : /^cloudy/.test(sym) ? '☁️' : /partly|fair/.test(sym) ? '🌤️' : /clearsky_night/.test(sym) ? '🌙' : /clear/.test(sym) ? '☀️' : '🌡️';
 
 // ---------- the planner
-// ctx = { people, favs:[id], done:{id:n}, live, walk:(attraction)=>meters, minutesLeft, month, rain }
+// Walking weight per minute, relative to a minute in the queue. Tuned with sim/simulate.mjs (40 simulated days):
+// 'normal' gave the most fun (−13% walking vs. weight 1); 'low' walks ~20% less again for ~5% less fun.
+export const WALK_WEIGHT = { normal: { heavy: 2, light: 1.2 }, low: { heavy: 6, light: 2 } };
+// ctx = { people, favs:[id], done:{id:n}, live, walk:(attraction)=>meters, minutesLeft, month, rain, walkPref }
 function scoreOne(group, a, ctx, extraWalkM = 0) {
   const st = status(ctx.live, a.id);
   if (!st.open) return null;
@@ -103,8 +106,11 @@ function scoreOne(group, a, ctx, extraWalkM = 0) {
   if (value <= 0.2) return null;
   const walkM = ctx.walk(a) + extraWalkM;
   const wait = st.wait ?? 10;
-  const slowWalk = group.some((p) => p.pregnant) ? 1.25 : 1; // walking costs more with a pregnant adult
-  const minutes = walkMin(walkM) * slowWalk + wait + a.ride;
+  // a minute walking costs more than a minute in the queue for a pregnant adult or a toddler (tired legs, buggy),
+  // tuned with sim/simulate.mjs; walk is also slower with a pregnant adult
+  const ww = WALK_WEIGHT[ctx.walkPref] || WALK_WEIGHT.normal;
+  const heavy = group.some((p) => p.pregnant || isToddler(p));
+  const minutes = walkMin(walkM) * (group.some((p) => p.pregnant) ? 1.25 : 1) * (heavy ? ww.heavy : ww.light) + wait + a.ride;
   if (ctx.minutesLeft != null && walkMin(walkM) + wait > ctx.minutesLeft) return null;
   return { a, ride, watch, escorted, value, walkM, wait, waitKnown: st.wait != null, minutes };
 }
@@ -189,7 +195,7 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   const fresh = pos && now - pos.t < 45 * 60e3;
   const here = fresh ? pos : null;
   const walk = (x) => (here ? distM(here, x) * PATH_FACTOR : 400);
-  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live) };
+  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk };
   const since = (k) => now - (memo.sent[k] || 0);
   const quiet = since('any') < 8 * 60e3;
   const nm = (id) => byId[id]?.name || 'attractie';

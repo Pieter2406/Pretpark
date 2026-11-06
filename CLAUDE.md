@@ -64,9 +64,17 @@ D1 tables `tickets` (code crop + page image per ticket), `families` (id, JSON st
 (push subscription per device + prefs + notification memo). Everything older than 7 days is deleted by the cron.
 No accounts; knowing the family id is the access.
 
+## Planner tuning and simulation
+- `node sim/simulate.mjs [days]` plays whole park days (synthetic crowd curve, breakdowns, rain, meals, rest) for the
+  app and three baselines (nearest, shortest queue, random) and prints rides/fun/wait/km per person.
+- `tests/planner.fuzz.test.js` checks the rules on 600 random situations; `tests/simulation.test.js` runs 3 days.
+- `WALK_WEIGHT` in logic.js came from a sweep in the simulator; `fam.walk = 'low'` is the "Liever weinig stappen" setting.
+- The simulator's "plezier" uses the same enjoyment weights as the planner, so compare on rides per person, km and
+  waits, not on "plezier" alone.
+
 ## Non-obvious decisions
 - Wait times only exist for rides ThemeParks.wiki reports; a ride missing from live data is treated as closed.
 - Score = family enjoyment (per person/category, watchers cost, wet rides penalised Oct–Mar, favourites ×2, done ×0.35ⁿ)
-  divided by minutes (walk × 1.25 with a pregnant adult + wait + ride).
+  divided by minutes (walk × 1.25 with a pregnant adult × WALK_WEIGHT + wait + ride).
 - The Worker has no path graph: it uses straight-line × 1.35 for walking times in notifications.
 - `localTime` in /api/live is Brussels wall-clock written as UTC so `getHours()` works inside the Worker.

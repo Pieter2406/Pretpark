@@ -3,7 +3,7 @@
 //   so all files switch together); pages are network-first, other files come from the cache and refresh behind.
 // - /api/* is never cached here: app.js keeps its own last copies (localStorage, IndexedDB for tickets).
 // - Cloudflare Access: a redirect to the login page is passed through untouched and never cached.
-const VERSION = 'pretpark-v3';
+const VERSION = 'pretpark-v4';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
   '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest',

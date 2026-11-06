@@ -183,7 +183,7 @@ function recompute() {
   const minutesLeft = S.live?.close ? Math.round((S.live.close - Date.now()) / 60e3) : null;
   S.plans = S.live ? plans({
     people: people(), favs: S.fam.favs, done: S.fam.done, live: S.live, walk: (a) => S.here.metres(a),
-    month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null, rain: raining(S.live),
+    month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null, rain: raining(S.live), walkPref: S.fam.walk,
   }) : [];
 }
 const walkOf = (x) => (S.here ? S.here.metres(x) : distM(pos(), x) * 1.35);
@@ -366,6 +366,10 @@ function renderFam() {
       <div class="row2"><button class="primary" data-go="share">📤 Delen</button><button data-go="copy">Kopieer link</button></div></div>
     <div class="card"><h2>🙋 Wie ben jij op deze gsm?</h2>
       <div class="seg">${ps.filter((p) => p.kind === 'adult').map((p) => `<button data-me="${p.id}" aria-pressed="${p.id === meId()}">${emoji(p)} ${esc(p.name)}</button>`).join('')}</div></div>
+    <div class="card"><h2>🚶 Stappen</h2>
+      <p class="small muted">Hoe zwaar weegt een stuk wandelen tegenover wat langer aanschuiven?</p>
+      <div class="seg"><button data-walk="normal" aria-pressed="${S.fam.walk !== 'low'}">Normaal</button><button data-walk="low" aria-pressed="${S.fam.walk === 'low'}">Liever weinig stappen</button></div>
+      <p class="small muted" style="margin-top:6px">In de simulatie: ±8 km per dag normaal, ±6 km met “liever weinig”, voor ±5% minder ritjes-plezier.</p></div>
     <div class="card" id="pushCard"><h2>🔔 Meldingen</h2><div id="pushBody"><p class="muted small">…</p></div></div>
     <div class="card"><h2>👨‍👩‍👧‍👦 Ons gezin</h2>
       <form id="peopleForm">${ps.map((p) => `
@@ -914,6 +918,7 @@ document.addEventListener('click', async (e) => {
   if (d.photo) { openPhoto(d.photo); return; }
   if (d.tdel) { if (confirm('Dit ticket verwijderen?')) { await idb.del('tickets', d.tdel); api(`/api/tickets/${S.famId}/${d.tdel}`, { method: 'DELETE' }).catch(() => {}); S.tickets = S.tickets.filter((x) => x.id !== d.tdel); renderTickets(); } return; }
   if (d.tabGo) { S.tab = d.tabGo; render(); return; }
+  if (d.walk) { await act({ type: 'walk', pref: d.walk }); toast(d.walk === 'low' ? 'Ik hou de wandelingen kort 👟' : 'Normaal stappen'); return; }
   if (d.me) { await act({ type: 'me', device, person: d.me }); toast('Top! 👋'); return; }
   if (d.filter) { S.filter = d.filter; renderList(); return; }
   if (d.fav) { buzz(); await act({ type: 'fav', id: d.fav }); if (!$('#sheet').hidden) rideSheet(d.fav); return; }
