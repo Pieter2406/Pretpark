@@ -1,11 +1,12 @@
-// Tiny IndexedDB wrapper: tickets and photos live on the device, so they open without signal.
+// Tiny IndexedDB wrapper: tickets, lost-child photos and the album's upload queue live on the device,
+// so they work without signal.
 let dbp = null;
 function db() {
   dbp ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open('pretpark', 1);
+    const req = indexedDB.open('pretpark', 2);
     req.onupgradeneeded = () => {
-      req.result.createObjectStore('tickets', { keyPath: 'id' });
-      req.result.createObjectStore('photos', { keyPath: 'id' });
+      const d = req.result;
+      for (const name of ['tickets', 'photos', 'uploads']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name, { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

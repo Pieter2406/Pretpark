@@ -19,6 +19,8 @@ export default defineConfig({
     "triggers": [triggers.scheduled({ schedule: "* * * * *" })],
     "env": {
       "DB": bindings.d1({ name: "pretpark-eu" }), // EU jurisdiction
+      // Photo album originals + thumbnails (R2, EU jurisdiction)
+      "PHOTOS": bindings.r2({ name: "pretpark-photos", jurisdiction: "eu" }),
       // VAPID private key (JWK) for Web Push: locally in .dev.vars, online via `cf deploy --secrets-file .dev.vars`
       "VAPID_PRIVATE_JWK": bindings.secret(),
     },

@@ -20,6 +20,12 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
 - Extras: car parking spot (shared, guide back), "Kind kwijt?" sheet with today's photo (local only, never uploaded),
   MET Norway weather (rain → indoor rides favoured), closing-time banner + notification.
 
+- Album tab + 📸 button on Nu/Kaart: photos in original quality to R2 bucket `pretpark-photos` (EU jurisdiction),
+  thumbnail (640 px JPEG) made on the phone; metadata (time, who = Access e-mail, place/nearest ride, ⭐) in D1 `photos`.
+  Upload queue in IndexedDB `uploads` (survives no signal and reloads). "Ons dagverslag" = timeline of rides done
+  (family log) and photos, starred photos large. Photos are never deleted automatically; families with photos are
+  kept too (their ride log belongs to the story).
+
 ## Access (security)
 - Access app "Pretpark" (id 314d5541-…, AUD in worker/access.js) on the whole host, policy "Gezin" = the two e-mails,
   IdP = one-time PIN, session 720 h. A second Access app bypasses only /manifest.webmanifest, /icon.svg and
@@ -42,7 +48,8 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
 - `public/tickets.js` import (lazy-loads `public/vendor/`: pdf.js 4.10.38, zxing-wasm 1.3.4 reader); `public/idb.js`.
 - `worker/index.js` `/api/live` (ThemeParks.wiki, cached 60 s), `/api/family`, `/api/push`, `/api/vapid`, cron.
 - `worker/push.js` Web Push (VAPID ES256 + aes128gcm) with WebCrypto, no library.
-- `worker/access.js` Access JWT check. `/api/tickets/<family>[/<id>]` GET/POST/PATCH/DELETE (max 20, ≤1.9 MB each).
+- `worker/access.js` Access JWT check. `/api/photos/<family>[/<id>[/thumb|full]]` GET list/file (?dl=1 download),
+  POST multipart (full, thumb, meta), PATCH {star, caption}, DELETE. `/api/tickets/<family>[/<id>]` GET/POST/PATCH/DELETE (max 20, ≤1.9 MB each).
 
 ## Run, test, deploy
 - `npm run dev` (needs `.dev.vars` with `VAPID_PRIVATE_JWK='<jwk json>'`; generate a P-256 ECDSA key if missing).

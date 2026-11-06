@@ -31,6 +31,7 @@
   <section id="view-now" class="view" aria-label="Nu"></section>
   <section id="view-map" class="view" aria-label="Kaart" hidden></section>
   <section id="view-list" class="view" aria-label="Alle attracties" hidden></section>
+  <section id="view-album" class="view" aria-label="Album" hidden></section>
   <section id="view-tickets" class="view" aria-label="Tickets" hidden></section>
   <section id="view-fam" class="view" aria-label="Gezin" hidden></section>
 </main>
@@ -39,12 +40,20 @@
   <button data-tab="now" aria-current="page"><span aria-hidden="true">✨</span>Nu</button>
   <button data-tab="map"><span aria-hidden="true">🗺️</span>Kaart</button>
   <button data-tab="list"><span aria-hidden="true">🎢</span>Lijst</button>
+  <button data-tab="album"><span aria-hidden="true">📸</span>Album</button>
   <button data-tab="tickets"><span aria-hidden="true">🎟️</span>Tickets</button>
   <button data-tab="fam"><span aria-hidden="true">👨‍👩‍👧‍👦</span>Gezin</button>
 </nav>
 
 <!-- full-screen walking guide -->
 <div id="guide" class="guide" hidden role="dialog" aria-modal="true" aria-label="Wandelgids"></div>
+
+<!-- quick photo button on Nu and Kaart -->
+<label id="fab" class="fab" hidden><input type="file" id="fabIn" accept="image/*" capture="environment" hidden><span aria-hidden="true">📸</span><span class="sr">Foto nemen</span></label>
+
+<!-- photo viewer and the day's story -->
+<div id="pview" class="pview" hidden role="dialog" aria-modal="true" aria-label="Foto"></div>
+<div id="story" class="story" hidden role="dialog" aria-modal="true" aria-label="Dagverslag"></div>
 
 <!-- ticket viewer: always white, for the scanner at the gate -->
 <div id="tview" class="tview" hidden role="dialog" aria-modal="true" aria-label="Ticket"></div>

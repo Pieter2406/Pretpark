@@ -3,6 +3,7 @@
 // - /api/family: the shared family state (D1), changed through validated actions
 // - /api/push: Web Push subscriptions; a cron every minute decides and sends notifications
 // - /api/tickets: imported admission tickets (code crop + page image), shared by the family
+// - /api/photos: the shared photo album, originals + thumbnails in R2 (EU), metadata in D1
 // Everything is behind Cloudflare Access (e-mail code) and checked again here (access.js).
 import { newFamily, apply } from '../public/family.js';
 import { accessEmail } from './access.js';
@@ -10,7 +11,7 @@ import { decideNotifications } from '../public/logic.js';
 import { sendPush, publicKey } from './push.js';
 
 const DEST = '8d8a8cc7-4523-4437-8bb6-5c87a26ba5ce'; // Walibi Belgium on ThemeParks.wiki
-const KEEP_DAYS = 7;
+const KEEP_DAYS = 7; // tickets, push subscriptions and families without photos; photos are kept until deleted
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
@@ -21,7 +22,9 @@ export default {
     const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
     try {
       if (parts[1] === 'health') return json({ ok: true });
-      if (!(await accessEmail(request))) return json({ error: 'auth' }, 401);
+      const email = await accessEmail(request);
+      if (!email) return json({ error: 'auth' }, 401);
+      if (parts[1] === 'photos') return await photos(request, env, email, parts[2], parts[3], parts[4]);
       if (parts[1] === 'tickets') return await tickets(request, env, parts[2], parts[3]);
       if (parts[1] === 'live') return json(await getLive(ctx));
       if (parts[1] === 'vapid') return json({ key: env.VAPID_PRIVATE_JWK ? publicKey(env) : null });
@@ -103,6 +106,8 @@ function schema(env) {
   ready ??= env.DB.batch([
     env.DB.prepare('CREATE TABLE IF NOT EXISTS families (id TEXT PRIMARY KEY, data TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY, family TEXT NOT NULL, meta TEXT NOT NULL, crop TEXT, page TEXT, created INTEGER NOT NULL)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, family TEXT NOT NULL, meta TEXT NOT NULL, t INTEGER NOT NULL, created INTEGER NOT NULL)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS photos_family ON photos (family, t)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS subs (device TEXT PRIMARY KEY, family TEXT NOT NULL, sub TEXT NOT NULL, prefs TEXT NOT NULL, memo TEXT NOT NULL, updated INTEGER NOT NULL)'),
   ]).catch((err) => { ready = null; throw err; });
   return ready;
@@ -214,13 +219,83 @@ async function tickets(request, env, fam, id) {
   return json({ ok: true }, 201);
 }
 
+// ---------- photos: originals in R2 at <family>/<id> and <family>/<id>.t (thumbnail), metadata in D1
+const IMG_TYPES = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp'];
+const MAX_PHOTO = 60 * 1024 * 1024;
+async function photos(request, env, email, fam, id, what) {
+  await schema(env);
+  if (!okFamily(fam)) throw fail(400, 'bad family');
+  if (!env.PHOTOS) throw fail(503, 'photo storage not set up');
+  const exists = await env.DB.prepare('SELECT 1 FROM families WHERE id = ?').bind(fam).first();
+  if (!exists) throw fail(404, 'no-family');
+  if (id && !/^[a-z0-9]{8,32}$/.test(id)) throw fail(400, 'bad id');
+
+  if (request.method === 'GET' && !id) {
+    const { results } = await env.DB.prepare('SELECT id, meta, t FROM photos WHERE family = ? ORDER BY t').bind(fam).all();
+    return json(results.map((r) => ({ id: r.id, t: r.t, ...JSON.parse(r.meta) })));
+  }
+  if (request.method === 'GET') {
+    const obj = await env.PHOTOS.get(`${fam}/${id}${what === 'thumb' ? '.t' : ''}`);
+    if (!obj) throw fail(404, 'no photo');
+    const h = new Headers();
+    obj.writeHttpMetadata(h);
+    h.set('etag', obj.httpEtag);
+    h.set('cache-control', 'private, max-age=31536000, immutable');
+    const url = new URL(request.url);
+    if (url.searchParams.get('dl')) {
+      const ext = (h.get('content-type') || 'image/jpeg').split('/')[1].replace('jpeg', 'jpg');
+      h.set('content-disposition', `attachment; filename="walibi-${obj.customMetadata?.stamp || id}.${ext}"`);
+    }
+    return new Response(obj.body, { headers: h });
+  }
+  if (request.method === 'DELETE' && id) {
+    await env.PHOTOS.delete([`${fam}/${id}`, `${fam}/${id}.t`]);
+    await env.DB.prepare('DELETE FROM photos WHERE family = ? AND id = ?').bind(fam, id).run();
+    return json({ ok: true });
+  }
+  if (request.method === 'PATCH' && id) {
+    const body = await request.json().catch(() => ({}));
+    const row = await env.DB.prepare('SELECT meta FROM photos WHERE family = ? AND id = ?').bind(fam, id).first();
+    if (!row) throw fail(404, 'no photo');
+    const meta = { ...JSON.parse(row.meta), caption: String(body.caption ?? '').slice(0, 200), star: !!body.star };
+    await env.DB.prepare('UPDATE photos SET meta = ? WHERE family = ? AND id = ?').bind(JSON.stringify(meta), fam, id).run();
+    return json({ ok: true, meta });
+  }
+  if (request.method !== 'POST' || !id) throw fail(405, 'method not allowed');
+  // multipart: full (original file), thumb (jpeg), meta (json)
+  const len = Number(request.headers.get('content-length') || 0);
+  if (len > MAX_PHOTO + 2e6) throw fail(413, 'photo too big');
+  const form = await request.formData();
+  const full = form.get('full'), thumb = form.get('thumb');
+  let m = {}; try { m = JSON.parse(form.get('meta') || '{}'); } catch { /* defaults */ }
+  if (!(full instanceof File) || full.size === 0 || full.size > MAX_PHOTO) throw fail(400, 'bad photo');
+  const type = IMG_TYPES.includes(full.type) ? full.type : 'image/jpeg';
+  const t = Number.isFinite(+m.t) && +m.t > 1.6e12 && +m.t < Date.now() + 864e5 ? +m.t : Date.now();
+  const stamp = brusselsLocal(t).slice(0, 16).replace(/[-:]/g, '').replace('T', '-'); // 20261107-1432
+  await env.PHOTOS.put(`${fam}/${id}`, full.stream(), { httpMetadata: { contentType: type }, customMetadata: { stamp, by: email } });
+  if (thumb instanceof File && thumb.size > 0 && thumb.size < 2e6) {
+    await env.PHOTOS.put(`${fam}/${id}.t`, thumb.stream(), { httpMetadata: { contentType: 'image/jpeg' } });
+  }
+  const meta = {
+    by: email, size: full.size, type,
+    w: Math.round(+m.w) || null, h: Math.round(+m.h) || null,
+    lat: Number.isFinite(+m.lat) && m.lat !== null ? +m.lat : null, lon: Number.isFinite(+m.lon) && m.lon !== null ? +m.lon : null,
+    near: String(m.near ?? '').slice(0, 60), caption: String(m.caption ?? '').slice(0, 200), star: false,
+  };
+  await env.DB.prepare('INSERT OR REPLACE INTO photos (id, family, meta, t, created) VALUES (?, ?, ?, ?, ?)')
+    .bind(id, fam, JSON.stringify(meta), t, Date.now()).run();
+  return json({ ok: true, id, t, ...meta }, 201);
+}
+
 // ---------- cron: every minute
 async function notifyAll(env, ctx) {
   await schema(env);
   const now = Date.now();
-  await env.DB.prepare('DELETE FROM subs WHERE family IN (SELECT id FROM families WHERE created < ?)').bind(now - KEEP_DAYS * 864e5).run();
-  await env.DB.prepare('DELETE FROM tickets WHERE family IN (SELECT id FROM families WHERE created < ?)').bind(now - KEEP_DAYS * 864e5).run();
-  await env.DB.prepare('DELETE FROM families WHERE created < ?').bind(now - KEEP_DAYS * 864e5).run();
+  const old = now - KEEP_DAYS * 864e5;
+  await env.DB.prepare('DELETE FROM subs WHERE family IN (SELECT id FROM families WHERE updated < ?)').bind(old).run();
+  await env.DB.prepare('DELETE FROM tickets WHERE created < ?').bind(old).run();
+  // a family with photos stays (the album and the day's log belong together); others go after a week
+  await env.DB.prepare('DELETE FROM families WHERE created < ? AND id NOT IN (SELECT DISTINCT family FROM photos)').bind(old).run();
   if (!env.VAPID_PRIVATE_JWK) return;
   const { results } = await env.DB.prepare(
     'SELECT s.device, s.sub, s.prefs, s.memo, f.data FROM subs s JOIN families f ON f.id = s.family WHERE f.updated > ?',

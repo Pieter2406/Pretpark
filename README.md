@@ -16,6 +16,8 @@ Alleen Pieter en Marjan kunnen de app openen: vul je e-mailadres in en daarna de
 4. **Tickets**: voeg de e-tickets toe (PDF uit de mail of screenshot). Aan de ingang: *Toon aan de ingang* en swipe van ticket naar ticket.
 5. **🚗 Auto**: bewaar waar je parkeert; ’s avonds brengt de pijl je terug. **🆘 Kind kwijt?**: neem ’s morgens een foto van de kinderen.
 
+6. **📸 Album**: maak foto’s met de gele knop of voeg ze toe uit je galerij. Ze gaan in originele kwaliteit naar jullie gedeelde album; zonder bereik wachten ze op de gsm. Markeer de mooiste met ⭐ en bekijk ’s avonds **Ons dagverslag**.
+
 Zonder bereik werkt de app verder met de laatste wachttijden. Tickets, kaart en wandelgids werken volledig offline, en wijzigingen worden verstuurd zodra er weer bereik is.
 
 ## Op het beginscherm

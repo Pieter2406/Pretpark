@@ -20,6 +20,7 @@ const S = {
   famId: null, fam: null, live: null, park: null, here: null, plans: [],
   gps: null, manual: store.get('manual', null), sim: 'wait', heading: null, headingSrc: null,
   tickets: [], ticketBusy: '', auth: false, liveStale: false, outbox: [],
+  album: store.get('c:album', null)?.v || [], uploads: [], upMsg: '', albumOff: false,
   tab: 'now', guide: null, filter: 'us', mapZoom: true, placing: false, dismissed: store.get('dismissed', {}), offline: false,
 };
 
@@ -673,6 +674,153 @@ function drawViewer() {
 }
 function closeViewer() { $('#tview').hidden = true; if (!S.guide) wake(false); }
 
+// ---------- photo album: originals go to R2 via the Worker; a queue in IndexedDB survives no signal and reloads
+const photoUrl = (id, kind = 'full') => `/api/photos/${S.famId}/${id}/${kind}`;
+const byName = (email) => { const n = String(email || '').split('@')[0].split(/[._]/)[0]; return n ? n[0].toUpperCase() + n.slice(1) : ''; };
+const thumbUrls = new Map();
+async function loadAlbum() {
+  try {
+    S.album = await api(`/api/photos/${S.famId}`); S.albumOff = false;
+    cached.save('album', S.album);
+  } catch (e) { if (e.status === 503) S.albumOff = true; }
+  await refreshUploads();
+}
+async function refreshUploads() {
+  const q = await idb.all('uploads');
+  S.uploads = q.map((u) => {
+    if (!thumbUrls.has(u.id)) thumbUrls.set(u.id, URL.createObjectURL(u.thumb || u.file));
+    return { id: u.id, t: u.meta.t, near: u.meta.near, pending: true, src: thumbUrls.get(u.id) };
+  });
+  if (S.tab === 'album') renderAlbum();
+}
+function nearest(here) {
+  let best = null;
+  for (const x of [...ATTRACTIONS, ...FOOD]) { const d = distM(here, x); if (d < 90 && (!best || d < best.d)) best = { d, name: x.name }; }
+  return best?.name || '';
+}
+async function thumbOf(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const thumb = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.8));
+    return { thumb, w: bmp.width, h: bmp.height };
+  } catch { return { thumb: null, w: null, h: null }; } // e.g. HEIC in a browser that can't decode it: the original still goes up
+}
+async function addPhotos(files, fromCamera) {
+  const live = S.gps && !S.sim ? S.gps : null;
+  let n = 0;
+  for (const file of files) {
+    if (!file.type.startsWith('image/') && !/\.(heic|heif)$/i.test(file.name)) continue;
+    const t = fromCamera ? Date.now() : (file.lastModified || Date.now());
+    const here = live && Math.abs(Date.now() - t) < 10 * 60e3 ? live : null; // only tag a place when it was taken just now
+    const { thumb, w, h } = await thumbOf(file);
+    const meta = { t, lat: here?.lat ?? null, lon: here?.lon ?? null, near: here ? nearest(here) : '', w, h };
+    await idb.put('uploads', { id: rnd(16), file, thumb, meta });
+    n++;
+  }
+  if (n) { buzz(); toast(n === 1 ? '📸 Foto bewaard' : `📸 ${n} foto’s bewaard`); }
+  await refreshUploads();
+  processUploads();
+}
+let uploading = false;
+async function processUploads() {
+  if (uploading || !S.famId) return;
+  uploading = true;
+  try {
+    let q = (await idb.all('uploads')).sort((a, b) => a.meta.t - b.meta.t);
+    let i = 0;
+    for (const u of q) {
+      S.upMsg = `Uploaden ${++i} van ${q.length}…`; if (S.tab === 'album') renderAlbum();
+      const fd = new FormData();
+      fd.append('full', u.file, u.file.name || `${u.id}.jpg`);
+      if (u.thumb) fd.append('thumb', u.thumb, 'thumb.jpg');
+      fd.append('meta', JSON.stringify(u.meta));
+      let res;
+      try { res = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual' }); }
+      catch { S.offline = true; break; } // no signal: try again later
+      if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); break; }
+      if (res.status === 503) { S.albumOff = true; break; }
+      if (res.ok) {
+        const p = await res.json();
+        S.album = [...S.album.filter((x) => x.id !== p.id), p].sort((a, b) => a.t - b.t);
+        cached.save('album', S.album);
+        await idb.del('uploads', u.id);
+        URL.revokeObjectURL(thumbUrls.get(u.id)); thumbUrls.delete(u.id);
+      } else if (res.status >= 400 && res.status < 500) {
+        await idb.del('uploads', u.id); toast('Eén foto kon niet opgeslagen worden'); // e.g. not an image
+      } else break;
+    }
+  } finally {
+    uploading = false; S.upMsg = '';
+    await refreshUploads();
+  }
+}
+function albumItems() {
+  return [...S.album.map((p) => ({ ...p, src: photoUrl(p.id, 'thumb') })), ...S.uploads].sort((a, b) => a.t - b.t);
+}
+const hourOf = (t) => new Date(t).toLocaleString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit' }).replace(/ om (\d+)$/, ' · $1u');
+function renderAlbum() {
+  const el = $('#view-album'); if (!el) return;
+  const items = albumItems();
+  const groups = [];
+  for (const it of items) { const k = hourOf(it.t); if (groups.at(-1)?.k !== k) groups.push({ k, items: [] }); groups.at(-1).items.push(it); }
+  el.innerHTML = `<p class="kicker">Ons album</p>
+    ${S.albumOff ? '<div class="banner">☁️ De fotoserver staat nog niet aan. Je foto’s blijven veilig op deze gsm en gaan vanzelf online zodra hij er is.</div>' : ''}
+    <div class="row2" style="margin-top:0">
+      <label class="filebtn solid"><input type="file" id="camIn" accept="image/*" capture="environment" hidden><span>📸 Foto nemen</span></label>
+      <label class="filebtn"><input type="file" id="galIn" accept="image/*" multiple hidden><span>🖼️ Uit galerij</span></label>
+    </div>
+    <p class="small muted">${items.length} foto’s${S.uploads.length ? ` · ⏳ ${S.uploads.length} wachten op upload` : ''}${S.upMsg ? ` · ${esc(S.upMsg)}` : ''}. Originele kwaliteit, gedeeld met het gezin.</p>
+    ${items.length ? `<button class="primary big" data-go="story" style="margin:6px 0 4px">📖 Ons dagverslag</button>` : ''}
+    ${groups.map((g) => `<h3 class="ghead">${esc(g.k)}</h3><div class="grid">${g.items.map((it) => `
+      <button class="ph" data-photo="${it.id}" aria-label="Foto ${new Date(it.t).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })}${it.near ? ' bij ' + esc(it.near) : ''}">
+        <img src="${it.src}" alt="" loading="lazy">${it.pending ? '<span class="badge">⏳</span>' : it.star ? '<span class="badge">⭐</span>' : ''}</button>`).join('')}</div>`).join('')
+      || '<div class="empty">Nog geen foto’s. Tik op 📸 en maak er samen een mooie dag van!</div>'}`;
+}
+let pv = { i: 0 };
+function openPhoto(id) {
+  const items = albumItems();
+  pv = { i: Math.max(0, items.findIndex((x) => x.id === id)) };
+  $('#pview').hidden = false; drawPhoto();
+}
+function drawPhoto() {
+  const items = albumItems(); const it = items[pv.i]; if (!it) return closePhoto();
+  const when = new Date(it.t).toLocaleString('nl-BE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  $('#pview').innerHTML = `<div class="pv-top"><span>${pv.i + 1} / ${items.length}</span><button data-go="pvclose" aria-label="Sluiten">✕</button></div>
+    <div class="pv-img"><img src="${it.pending ? it.src : photoUrl(it.id)}" alt="" style="background-image:url('${it.pending ? '' : photoUrl(it.id, 'thumb')}')"></div>
+    <div class="pv-info"><b>${when}</b>${it.near ? ` · 📍 ${esc(it.near)}` : ''}${it.by ? ` · 📷 ${esc(byName(it.by))}` : ''}${it.pending ? ' · ⏳ nog niet geüpload' : ''}</div>
+    ${it.pending ? '' : `<div class="pv-actions">
+      <button data-go="pvstar" aria-pressed="${!!it.star}">${it.star ? '⭐ Favoriet' : '☆ Favoriet'}</button>
+      <a class="btn" href="${photoUrl(it.id)}?dl=1" download>⬇️ Bewaar</a>
+      ${navigator.canShare ? '<button data-go="pvshare">📤 Deel</button>' : ''}
+      <button data-go="pvdel" aria-label="Verwijder">🗑️</button></div>`}
+    <div class="pv-nav"><button data-go="pvprev" ${pv.i === 0 ? 'disabled' : ''}>‹</button><button data-go="pvnext" ${pv.i === items.length - 1 ? 'disabled' : ''}>›</button></div>`;
+}
+function closePhoto() { $('#pview').hidden = true; }
+
+// The wrap-up: the day as a timeline of rides done and photos taken, favourites big
+function openStory() {
+  const items = albumItems().filter((x) => !x.pending);
+  const log = (S.fam?.log || []).flatMap((l) => l.ids.map((id) => ({ t: l.t, ride: byId[id] }))).filter((x) => x.ride);
+  const all = [...items.map((p) => ({ t: p.t, photo: p })), ...log].sort((a, b) => a.t - b.t);
+  const rides = Object.values(S.fam?.done || {}).reduce((a, b) => a + b, 0);
+  const fav = Object.entries(S.fam?.done || {}).sort((a, b) => b[1] - a[1])[0];
+  const day = all.length ? new Date(all[0].t).toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const first = all[0]?.t, last = all.at(-1)?.t;
+  const tm = (t) => new Date(t).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' });
+  $('#story').innerHTML = `<div class="st-top"><button data-go="storyclose" aria-label="Sluiten">✕</button></div>
+    <header class="st-head"><p class="kicker">Onze dag in Walibi</p><h2>${esc(day)}</h2>
+      <div class="stats st-stats"><div class="stat"><b>${rides}</b><span>ritjes</span></div><div class="stat"><b>${items.length}</b><span>foto’s</span></div>
+      ${first ? `<div class="stat"><b>${tm(first)}</b><span>tot ${tm(last)}</span></div>` : ''}${fav ? `<div class="stat"><b>${fav[1]}×</b><span>${esc(byId[fav[0]]?.name || '')}</span></div>` : ''}</div></header>
+    <ol class="st-line">${all.map((x) => x.photo
+      ? `<li class="${x.photo.star ? 'big' : ''}"><time>${tm(x.t)}</time><button class="ph" data-photo="${x.photo.id}"><img src="${photoUrl(x.photo.id, x.photo.star ? 'full' : 'thumb')}" alt="" loading="lazy"></button>${x.photo.near ? `<span class="small muted">📍 ${esc(x.photo.near)}</span>` : ''}</li>`
+      : `<li class="ride"><time>${tm(x.t)}</time><span>${x.ride.icon} <b>${esc(x.ride.name)}</b></span></li>`).join('')}</ol>
+    <p class="muted small" style="text-align:center;margin:24px 0">Tip: markeer je mooiste foto’s met ⭐, dan komen ze groot in het verslag.</p>`;
+  $('#story').hidden = false; $('#story').scrollTop = 0;
+}
+
 // ---------- car and lost child
 function carSheet() {
   const c = S.fam.car;
@@ -739,13 +887,15 @@ function renderBanners() {
 
 function render() {
   renderBanners();
-  for (const t of ['now', 'map', 'list', 'tickets', 'fam']) $('#view-' + t).hidden = S.tab !== t;
+  for (const t of ['now', 'map', 'list', 'album', 'tickets', 'fam']) $('#view-' + t).hidden = S.tab !== t;
+  $('#fab').hidden = !(S.tab === 'now' || S.tab === 'map') || !S.fam;
   document.querySelectorAll('.tabs button').forEach((b) => (b.dataset.tab === S.tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
   if (S.tab === 'tickets' && !document.activeElement?.closest('#view-tickets input, #view-tickets select')) renderTickets();
   if (!S.fam) return;
   if (S.tab === 'now') renderNow();
   if (S.tab === 'map') renderMapView();
   if (S.tab === 'list') renderList();
+  if (S.tab === 'album') renderAlbum();
   if (S.tab === 'fam' && !document.activeElement?.closest('#peopleForm')) renderFam();
   if (S.guide) updateGuide();
 }
@@ -761,6 +911,7 @@ document.addEventListener('click', async (e) => {
   if (S.placing && t.closest('#bigmap')) return; // handled by map placement below
   if (d.tab) { S.tab = d.tab; buzz(); render(); scrollTo(0, 0); return; }
   if (d.tview) { openViewer(+d.tview); return; }
+  if (d.photo) { openPhoto(d.photo); return; }
   if (d.tdel) { if (confirm('Dit ticket verwijderen?')) { await idb.del('tickets', d.tdel); api(`/api/tickets/${S.famId}/${d.tdel}`, { method: 'DELETE' }).catch(() => {}); S.tickets = S.tickets.filter((x) => x.id !== d.tdel); renderTickets(); } return; }
   if (d.tabGo) { S.tab = d.tabGo; render(); return; }
   if (d.me) { await act({ type: 'me', device, person: d.me }); toast('Top! 👋'); return; }
@@ -796,6 +947,36 @@ document.addEventListener('click', async (e) => {
     case 'ate': await act({ type: 'ate' }); closeSheet(); if (S.guide) closeGuide(); toast('Smakelijk! 😋'); break;
     case 'sheetclose': closeSheet(); break;
     case 'tvclose': closeViewer(); break;
+    case 'story': openStory(); break;
+    case 'storyclose': $('#story').hidden = true; break;
+    case 'pvclose': closePhoto(); break;
+    case 'pvprev': pv.i = Math.max(0, pv.i - 1); drawPhoto(); break;
+    case 'pvnext': pv.i = Math.min(albumItems().length - 1, pv.i + 1); drawPhoto(); break;
+    case 'pvstar': {
+      const it = albumItems()[pv.i]; it.star = !it.star;
+      const p = S.album.find((x) => x.id === it.id); if (p) p.star = it.star;
+      drawPhoto(); renderAlbum();
+      api(`/api/photos/${S.famId}/${it.id}`, { method: 'PATCH', body: { star: it.star, caption: it.caption || '' } }).catch(() => toast('Opslaan lukte niet'));
+      break;
+    }
+    case 'pvshare': {
+      const it = albumItems()[pv.i];
+      try {
+        const blob = await (await fetch(photoUrl(it.id))).blob();
+        const file = new File([blob], `walibi-${it.id}.${blob.type.split('/')[1] === 'jpeg' ? 'jpg' : blob.type.split('/')[1]}`, { type: blob.type });
+        await navigator.share({ files: [file] });
+      } catch (e) { if (e.name !== 'AbortError') toast('Delen lukte niet'); }
+      break;
+    }
+    case 'pvdel': {
+      const it = albumItems()[pv.i];
+      if (!confirm('Deze foto verwijderen voor iedereen?')) break;
+      try { await api(`/api/photos/${S.famId}/${it.id}`, { method: 'DELETE' }); S.album = S.album.filter((x) => x.id !== it.id); cached.save('album', S.album); toast('Verwijderd'); }
+      catch { toast('Verwijderen lukte niet'); }
+      if (!albumItems().length) closePhoto(); else { pv.i = Math.min(pv.i, albumItems().length - 1); drawPhoto(); }
+      renderAlbum();
+      break;
+    }
     case 'tvprev': tv.i = Math.max(0, tv.i - 1); tv.page = false; drawViewer(); break;
     case 'tvnext': tv.i = Math.min(S.tickets.length - 1, tv.i + 1); tv.page = false; drawViewer(); break;
     case 'tvpage': tv.page = !tv.page; drawViewer(); break;
@@ -821,12 +1002,14 @@ document.addEventListener('click', async (e) => {
   }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { if (!$('#tview').hidden) closeViewer(); else if (!$('#sheet').hidden) closeSheet(); else if (S.guide) closeGuide(); }
+  if (e.key === 'Escape') { if (!$('#pview').hidden) closePhoto(); else if (!$('#story').hidden) $('#story').hidden = true; else if (!$('#tview').hidden) closeViewer(); else if (!$('#sheet').hidden) closeSheet(); else if (S.guide) closeGuide(); }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('g.pin[data-ride]')) { e.preventDefault(); rideSheet(e.target.dataset.ride); }
 });
 $('#sheetBack').addEventListener('click', closeSheet);
 document.addEventListener('change', async (e) => {
   if (e.target.id === 'tfile') { importTickets([...e.target.files]); return; }
+  if (e.target.id === 'camIn' || e.target.id === 'fabIn') { addPhotos([...e.target.files], true); e.target.value = ''; return; }
+  if (e.target.id === 'galIn') { addPhotos([...e.target.files], false); e.target.value = ''; return; }
   if (e.target.id === 'photoIn' && e.target.files[0]) { savePhoto(e.target.files[0]).catch(() => toast('Foto bewaren lukte niet')); return; }
   const tid = e.target.dataset.tname || e.target.dataset.tperson;
   if (tid) {
@@ -862,13 +1045,16 @@ document.addEventListener('pointerup', (e) => {
   recompute(); render(); toast('📍 Positie gezet');
 });
 let swipeX = null;
-document.addEventListener('touchstart', (e) => { if (e.target.closest('#tview')) swipeX = e.touches[0].clientX; }, { passive: true });
+let swipeIn = null;
+document.addEventListener('touchstart', (e) => { swipeIn = e.target.closest('#tview') ? 't' : e.target.closest('#pview') ? 'p' : null; if (swipeIn) swipeX = e.touches[0].clientX; }, { passive: true });
 document.addEventListener('touchend', (e) => {
   if (swipeX == null) return;
   const dx = e.changedTouches[0].clientX - swipeX; swipeX = null;
-  if (Math.abs(dx) > 60) { tv.i = Math.max(0, Math.min(S.tickets.length - 1, tv.i + (dx < 0 ? 1 : -1))); tv.page = false; drawViewer(); }
+  if (Math.abs(dx) < 60) return;
+  if (swipeIn === 't') { tv.i = Math.max(0, Math.min(S.tickets.length - 1, tv.i + (dx < 0 ? 1 : -1))); tv.page = false; drawViewer(); }
+  if (swipeIn === 'p') { pv.i = Math.max(0, Math.min(albumItems().length - 1, pv.i + (dx < 0 ? 1 : -1))); drawPhoto(); }
 });
-addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); });
+addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); processUploads(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadLive(); pollFamily(); if (S.guide) wake(true); } });
 
 // ---------- start
@@ -883,7 +1069,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { lo
     startGps();
     if (typeof window.DeviceOrientationEvent?.requestPermission !== 'function') enableCompass(false);
     await loadLive();
-    flushOutbox(); syncTickets();
+    flushOutbox(); syncTickets(); loadAlbum().then(processUploads);
     const go = url.searchParams.get('go');
     if (go && byId[go]) { S.tab = 'now'; render(); rideSheet(go); }
     if (url.searchParams.get('food')) foodSheet();
@@ -895,5 +1081,6 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { lo
   }
   setInterval(loadLive, 60e3);
   setInterval(pollFamily, 15e3);
+  setInterval(() => { if (!document.hidden) { processUploads(); if (S.tab === 'album' && !uploading) loadAlbum(); } }, 60e3);
   setInterval(() => { if (S.tab === 'now' && !S.guide) renderNow(); }, 30e3);
 })();
