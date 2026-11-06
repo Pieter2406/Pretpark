@@ -1,7 +1,7 @@
 # Pretpark — notes for future sessions
 
 Live at https://pretpark.pieterverlinden.be, behind Cloudflare Access (e-mail one-time code) for
-pieter.verlinden@outlook.com and marjan.vandenabeele@gmail.com only; noindex. A family day planner for Walibi Belgium, built for
+pieter.verlinden@outlook.com, marjan.vandenabeele@gmail.com and vincent-verlinden@live.com only; noindex. A family day planner for Walibi Belgium, built for
 one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm), but people are editable in the app.
 
 ## Spec (short)
@@ -27,7 +27,7 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
   kept too (their ride log belongs to the story).
 
 ## Access (security)
-- Access app "Pretpark" (id 314d5541-…, AUD in worker/access.js) on the whole host, policy "Gezin" = the two e-mails,
+- Access app "Pretpark" (id 314d5541-…, AUD in worker/access.js) on the whole host, policy "Gezin" = the family e-mails (keep in sync with ALLOWED),
   IdP = one-time PIN, session 720 h. A second Access app bypasses only /manifest.webmanifest, /icon.svg and
   /apple-touch-icon.png (home-screen install fetches these without cookies).
 - worker/access.js verifies the Access JWT again for every /api call (team pieterverlinden.cloudflareaccess.com).

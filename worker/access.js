@@ -4,7 +4,7 @@ import { ub64 as dec } from './b64.js';
 
 const TEAM = 'https://pieterverlinden.cloudflareaccess.com';
 const AUD = '5e7b4ac86c3997ba2b9a848c1182db03096f9a4447356a444bd6fb4a17408720'; // Access app "Pretpark"
-export const ALLOWED = ['pieter.verlinden@outlook.com', 'marjan.vandenabeele@gmail.com'];
+export const ALLOWED = ['pieter.verlinden@outlook.com', 'marjan.vandenabeele@gmail.com', 'vincent-verlinden@live.com'];
 
 let keys = null, keysAt = 0;
 async function getKeys() {

@@ -6,7 +6,7 @@ De app kijkt naar de live wachttijden, waar je staat en wie er mee is (lengtes, 
 
 ## Inloggen
 
-Alleen Pieter en Marjan kunnen de app openen: vul je e-mailadres in en daarna de code die je per mail krijgt. Je blijft 30 dagen ingelogd.
+Alleen Pieter, Marjan en Vincent kunnen de app openen: vul je e-mailadres in en daarna de code die je per mail krijgt. Je blijft 30 dagen ingelogd.
 
 ## Gebruik
 
