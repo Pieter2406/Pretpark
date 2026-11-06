@@ -36,3 +36,29 @@ export function readyMessage(fam, part) {
   const place = byId[plan?.meet || plan?.parts?.[0]?.id]?.name;
   return { tag: 'ready', title: '✅ Wij zijn klaar', body: place ? `${who} staan aan de uitgang van ${place}` : `${who} zijn klaar`, url: '/' };
 }
+
+// ---------- family chat
+const okId = (x) => typeof x === 'string' && /^[a-z0-9]{8,24}$/.test(x);
+const finite = (x, lo, hi) => (typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi ? x : null);
+// A validated message, or null. The server sets the time and the sender's e-mail (from Cloudflare Access).
+export function chatMessage(b, email, now) {
+  if (!b || !okId(b.id)) return null;
+  const kind = b.kind === 'loc' ? 'loc' : 'text';
+  const text = String(b.text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500);
+  const msg = { id: b.id, t: now, kind, text, by: String(email || '').slice(0, 120) };
+  if (/^p\d{1,2}$/.test(b.person)) msg.person = b.person;
+  if (typeof b.device === 'string' && /^[a-z0-9]{8,32}$/i.test(b.device)) msg.device = b.device;
+  if (kind === 'loc') {
+    const lat = finite(b.lat, -90, 90), lon = finite(b.lon, -180, 180);
+    if (lat == null || lon == null) return null;
+    Object.assign(msg, { lat, lon, near: String(b.near ?? '').slice(0, 60) });
+  } else if (!text) return null;
+  return msg;
+}
+export function chatNote(fam, msg) {
+  const p = (fam?.people || []).find((x) => x.id === msg.person);
+  const fromMail = String(msg.by || '').split('@')[0].split(/[._-]/)[0];
+  const name = p?.name || (fromMail ? fromMail[0].toUpperCase() + fromMail.slice(1) : 'Gezin');
+  const body = msg.kind === 'loc' ? `📍 Hier ben ik${msg.near ? ` (bij ${msg.near})` : ''}${msg.text ? ` · ${msg.text}` : ''}` : msg.text;
+  return { tag: 'chat', title: `💬 ${name}`, body: body.slice(0, 200), url: '/?chat=1' };
+}

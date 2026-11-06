@@ -256,3 +256,32 @@ test('cron retention: by the family\'s last change; families with photos and pho
   assert.deepEqual(ids("SELECT device FROM subs WHERE device LIKE 'devret%'"), ['devret00003']);
   assert.deepEqual(ids("SELECT id FROM photos WHERE id = 'ph00000001'"), ['ph00000001']);
 });
+
+test('chat: validated messages, idempotent POST, ?after=, pushed to the other phones only (respecting prefs)', async () => {
+  const { id } = await newFam();
+  const keys = await subKeys();
+  await call('POST', '/api/push', { device: 'chatphoneA1', family: id, sub: { endpoint: 'https://fcm.googleapis.com/fcm/send/a1', keys }, prefs: {} });
+  await call('POST', '/api/push', { device: 'chatphoneB1', family: id, sub: { endpoint: 'https://fcm.googleapis.com/fcm/send/b1', keys }, prefs: {} });
+  await call('POST', '/api/push', { device: 'chatphoneC1', family: id, sub: { endpoint: 'https://fcm.googleapis.com/fcm/send/c1', keys }, prefs: { chat: false } });
+  await settle(); pushes.length = 0;
+  const m1 = await call('POST', `/api/chat/${id}`, { id: 'msg0000001', text: '  Waar zijn jullie? <b>  ', person: 'p1', device: 'chatphoneA1' });
+  assert.equal(m1.status, 201);
+  assert.equal(m1.data.text, 'Waar zijn jullie? <b>'); // stored as text; the app escapes it
+  assert.equal(m1.data.by, 'local@dev');
+  await settle();
+  assert.deepEqual(pushes.map((p) => p.url), ['https://fcm.googleapis.com/fcm/send/b1']); // not the sender, not C (chat off)
+  pushes.length = 0;
+  const again = await call('POST', `/api/chat/${id}`, { id: 'msg0000001', text: 'changed', person: 'p1', device: 'chatphoneA1' });
+  assert.equal(again.status, 200); assert.equal(again.data.text, 'Waar zijn jullie? <b>');
+  await settle(); assert.equal(pushes.length, 0);
+  assert.equal((await call('POST', `/api/chat/${id}`, { id: 'msg0000002', text: '   ' })).status, 400);
+  assert.equal((await call('POST', `/api/chat/${id}`, { id: 'bad id!', text: 'x' })).status, 400);
+  assert.equal((await call('POST', `/api/chat/${id}`, { id: 'msg0000003', kind: 'loc', lat: 'x', lon: 4 })).status, 400);
+  const loc = await call('POST', `/api/chat/${id}`, { id: 'msg0000004', kind: 'loc', lat: 50.7, lon: 4.59, near: 'Kondaa', person: 'p2' });
+  assert.equal(loc.status, 201); assert.equal(loc.data.near, 'Kondaa');
+  const all = await call('GET', `/api/chat/${id}`);
+  assert.deepEqual(all.data.map((m) => m.id), ['msg0000001', 'msg0000004']);
+  const newer = await call('GET', `/api/chat/${id}?after=${m1.data.t}`);
+  assert.ok(newer.data.every((m) => m.t > m1.data.t));
+  assert.equal((await call('GET', '/api/chat/doesnotexist000')).status, 404);
+});

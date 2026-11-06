@@ -88,7 +88,12 @@ No accounts; knowing the family id is the access.
 - Photos are only dropped from the upload queue on 'bad photo'/'photo too big'.
 - Extras: stickers (done rides), photo moment after "Gedaan", partner dot on the map, morning tip, wait trends
   (last 45 min in localStorage), auto dark mode after sunset, spoken directions (speechSynthesis nl-BE), undo toasts.
-- Tabs: Nu · Kaart (with Kaart/Lijst toggle) · Album · Tickets · Gezin; camera button in the header.
+- Tabs: Nu · Kaart (with Kaart/Lijst toggle) · Album · Tickets · Gezin; chat + camera buttons in the header.
+- Family chat: `/api/chat/<family>` GET (?after=ms) / POST {id, kind text|loc, text, lat, lon, near, person, device};
+  D1 `messages` (PK family+id, so retries are idempotent), validated in worker/rules.js `chatMessage`, pushed at once
+  to the family's other phones (pref `chat`). App: header 💬 with unread badge, quick replies, "📍 Deel mijn plek"
+  (the other phone gets "Breng me erheen"), send queue in localStorage `pp:chatq`, polls every 4 s while open.
+  Messages are deleted after 30 days.
 
 ## Non-obvious decisions
 - Wait times only exist for rides ThemeParks.wiki reports; a ride missing from live data is treated as closed.

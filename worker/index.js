@@ -8,7 +8,7 @@
 import { newFamily, apply, okDevice } from '../public/family.js';
 import { accessEmail } from './access.js';
 import { decideNotifications, parkOpen } from '../public/logic.js';
-import { okEndpoint, readyMessage, okDataUrl, liveRides } from './rules.js';
+import { okEndpoint, readyMessage, okDataUrl, liveRides, chatMessage, chatNote } from './rules.js';
 import { sendPush, publicKey } from './push.js';
 
 const DEST = '8d8a8cc7-4523-4437-8bb6-5c87a26ba5ce'; // Walibi Belgium on ThemeParks.wiki
@@ -30,6 +30,7 @@ export default {
       if (!email) return json({ error: 'auth' }, 401);
       if (parts[1] === 'photos') return await photos(request, env, email, parts[2], parts[3], parts[4]);
       if (parts[1] === 'tickets') return await tickets(request, env, parts[2], parts[3]);
+      if (parts[1] === 'chat') return await chat(request, env, ctx, email, parts[2]);
       if (parts[1] === 'live') return json(await getLive(ctx));
       if (parts[1] === 'vapid') return json({ key: env.VAPID_PRIVATE_JWK ? publicKey(env) : null });
       if (parts[1] === 'family') return await family(request, env, ctx, parts[2]);
@@ -108,6 +109,8 @@ function schema(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY, family TEXT NOT NULL, meta TEXT NOT NULL, crop TEXT, page TEXT, created INTEGER NOT NULL)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, family TEXT NOT NULL, meta TEXT NOT NULL, t INTEGER NOT NULL, created INTEGER NOT NULL)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS photos_family ON photos (family, t)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS messages (family TEXT NOT NULL, id TEXT NOT NULL, t INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (family, id))'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS messages_family ON messages (family, t)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS subs (device TEXT PRIMARY KEY, family TEXT NOT NULL, sub TEXT NOT NULL, prefs TEXT NOT NULL, memo TEXT NOT NULL, updated INTEGER NOT NULL)'),
   ]).catch((err) => { ready = null; throw err; });
   return ready;
@@ -175,6 +178,47 @@ async function notifyReady(env, id, fam, act) {
   }));
 }
 
+// ---------- family chat: { id, t, kind: 'text'|'loc', text, lat, lon, near, person, by, device }
+// GET ?after=<ms> → newer messages (max 300, oldest first); without `after` the last 200.
+// POST is idempotent per (family, id), so an offline retry never doubles a message; new ones are pushed at once.
+async function chat(request, env, ctx, email, fam) {
+  await schema(env);
+  if (!okFamily(fam)) throw fail(400, 'bad family');
+  const row = await env.DB.prepare('SELECT data FROM families WHERE id = ?').bind(fam).first();
+  if (!row) throw fail(404, 'no-family');
+  if (request.method === 'GET') {
+    const after = Number(new URL(request.url).searchParams.get('after'));
+    const { results } = Number.isFinite(after) && after > 0
+      ? await env.DB.prepare('SELECT data FROM messages WHERE family = ? AND t > ? ORDER BY t LIMIT 300').bind(fam, after).all()
+      : await env.DB.prepare('SELECT data FROM (SELECT data, t FROM messages WHERE family = ? ORDER BY t DESC LIMIT 200) ORDER BY t').bind(fam).all();
+    return json(results.map((r) => JSON.parse(r.data)));
+  }
+  if (request.method !== 'POST') throw fail(405, 'method not allowed');
+  const text = await request.text();
+  if (text.length > 4000) throw fail(413, 'too big');
+  let b; try { b = JSON.parse(text); } catch { throw fail(400, 'bad json'); }
+  const msg = chatMessage(b, email, Date.now());
+  if (!msg) throw fail(400, 'bad message');
+  const res = await env.DB.prepare('INSERT OR IGNORE INTO messages (family, id, t, data) VALUES (?, ?, ?, ?)').bind(fam, msg.id, msg.t, JSON.stringify(msg)).run();
+  if (res.meta.changes === 1) ctx?.waitUntil?.(notifyChat(env, fam, JSON.parse(row.data), msg).catch((err) => console.error('chat push', err)));
+  else {
+    const prev = await env.DB.prepare('SELECT data FROM messages WHERE family = ? AND id = ?').bind(fam, msg.id).first();
+    return json(prev ? JSON.parse(prev.data) : msg);
+  }
+  return json(msg, 201);
+}
+async function notifyChat(env, id, fam, msg) {
+  if (!env.VAPID_PRIVATE_JWK) return;
+  const { results } = await env.DB.prepare('SELECT device, sub, prefs FROM subs WHERE family = ?').bind(id).all();
+  const note = chatNote(fam, msg);
+  await Promise.all(results.filter((r) => r.device !== msg.device && JSON.parse(r.prefs || '{}').chat !== false).map(async (r) => {
+    try {
+      const status = await pushTo(env, r.sub, note);
+      if (status === 404 || status === 410) await env.DB.prepare('DELETE FROM subs WHERE device = ?').bind(r.device).run();
+    } catch (err) { console.error('chat push', r.device, err); }
+  }));
+}
+
 async function push(request, env) {
   await schema(env);
   const body = await request.json().catch(() => ({}));
@@ -185,7 +229,7 @@ async function push(request, env) {
   }
   if (request.method !== 'POST') throw fail(405, 'method not allowed');
   if (!okFamily(body.family)) throw fail(400, 'bad family');
-  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false };
+  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false, chat: body.prefs?.chat !== false };
   const s = body.sub;
   if (s) {
     if (!okEndpoint(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) throw fail(400, 'bad subscription');
@@ -340,6 +384,7 @@ async function notifyAll(env, ctx) {
   await env.DB.prepare('DELETE FROM subs WHERE family IN (SELECT id FROM families WHERE updated < ?) OR family NOT IN (SELECT id FROM families)').bind(oldSubs).run();
   // a family with photos stays (the album and the day's log belong together); photos are never deleted here
   await env.DB.prepare('DELETE FROM families WHERE updated < ? AND id NOT IN (SELECT DISTINCT family FROM photos)').bind(oldFam).run();
+  await env.DB.prepare('DELETE FROM messages WHERE t < ? OR family NOT IN (SELECT id FROM families)').bind(oldFam).run();
   if (!env.VAPID_PRIVATE_JWK) return;
   const { results } = await env.DB.prepare(
     'SELECT s.device, s.sub, s.prefs, s.memo, f.data FROM subs s JOIN families f ON f.id = s.family WHERE f.updated > ?',

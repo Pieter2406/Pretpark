@@ -18,6 +18,8 @@ Alleen Pieter, Marjan en Vincent kunnen de app openen: vul je e-mailadres in en 
 
 6. **📸 Album**: maak foto’s met de gele knop of voeg ze toe uit je galerij. Ze gaan in originele kwaliteit naar jullie gedeelde album; zonder bereik wachten ze op de gsm. Markeer de mooiste met ⭐ en bekijk ’s avonds **Ons dagverslag**.
 
+7. **💬 Gezinschat** (knop bovenaan): berichten aan elkaar, snelle antwoorden en **📍 Deel mijn plek**. De ander tikt op *Breng me erheen* en de pijl wijst de weg naar jou.
+
 Zonder bereik werkt de app verder met de laatste wachttijden. Tickets, kaart en wandelgids werken volledig offline, en wijzigingen worden verstuurd zodra er weer bereik is.
 
 ## Op het beginscherm

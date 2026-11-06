@@ -26,6 +26,7 @@ const S = {
   tab: 'now', mapMode: 'map', guide: null, filter: 'us', placing: false, dismissed: store.get('dismissed', {}),
   history: store.get('history', []), voice: store.get('voice', false), autoNight: store.get('autoNight', true),
   newVersion: false,
+  chat: store.get('c:chat', null)?.v || [], chatQ: store.get('chatq', []), chatRead: store.get('chatRead', 0), chatOpen: false,
 };
 
 // ---------- people
@@ -149,6 +150,7 @@ async function loadLive() {
 }
 async function pollFamily() {
   if (document.hidden || !S.famId) return;
+  if (!S.chatOpen) loadChat();
   await flushOutbox();
   if (S.outbox.length) return; // keep local changes until they're sent
   try {
@@ -250,7 +252,8 @@ function recompute() {
   lastPlanPos = here;
   S.here = S.park.fromHere(here);
   const minutesLeft = S.live?.close ? Math.round((S.live.close - Date.now()) / 60e3) : null;
-  S.plans = S.live ? plans({
+  const closed = S.live?.close && Date.now() > S.live.close; // after closing time: nothing to suggest
+  S.plans = S.live && !closed ? plans({
     people: people(), favs: S.fam.favs || [], done: S.fam.done || {}, live: S.live, walk: (a) => S.here.metres(a),
     month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null, rain: raining(S.live), walkPref: S.fam.walk,
   }) : [];
@@ -630,7 +633,7 @@ function renderFam() {
 // ---------- push notifications
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const pushPrefs = () => store.get('pushPrefs', { fav: true, best: true, food: true, down: true });
+const pushPrefs = () => ({ chat: true, ...store.get('pushPrefs', { fav: true, best: true, food: true, down: true }) });
 async function renderPush() {
   const body = $('#pushBody'); if (!body) return;
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -647,7 +650,7 @@ async function renderPush() {
   const tog = (k, t) => `<label class="tog"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}> ${t}</label>`;
   body.innerHTML = sub
     ? `<p class="small">✅ Meldingen staan aan op deze gsm.</p>
-      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}</div>
+      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}${tog('chat', '💬 Berichten in de gezinschat')}</div>
       <div class="row2"><button data-go="pushtest">Testmelding</button><button data-go="pushoff">Uitzetten</button></div>`
     : `<p class="small muted">Krijg een seintje als een favoriet kort wordt, als er iets beters is, als het etenstijd is, als jullie attractie stilvalt of als de anderen klaar zijn. Ook als de app dicht is.</p>
       <button class="primary big" data-go="pushon">🔔 Meldingen aanzetten</button>`;
@@ -1134,6 +1137,75 @@ function deleteLater(id, label, doIt) {
   toast(`${label} verwijderd`, { label: 'Ongedaan maken', fn: () => { clearTimeout(pendingDelete.get(id)); pendingDelete.delete(id); render(); toast('Teruggezet'); } }, 5000);
 }
 
+// ---------- family chat: messages on the server (D1), a send queue on the phone for no-signal moments
+const QUICK = ['Waar zijn jullie?', 'We zijn klaar 👍', 'Kom naar ons', 'Even rusten 🪑', 'Wij gaan eten 🍽️'];
+const msgName = (m) => (m.device === device ? 'Jij' : person(m.person)?.name || byName(m.by) || 'Gezin');
+const unread = () => S.chat.filter((m) => m.device !== device && m.t > S.chatRead).length;
+async function loadChat() {
+  if (!S.famId) return;
+  try {
+    const last = S.chat.at(-1)?.t || 0;
+    const fresh = await api(`/api/chat/${S.famId}${last ? `?after=${last}` : ''}`);
+    if (fresh.length) {
+      const ids = new Set(S.chat.map((m) => m.id));
+      const before = unread();
+      S.chat = [...S.chat, ...fresh.filter((m) => !ids.has(m.id))].sort((a, b) => a.t - b.t).slice(-300);
+      cached.save('chat', S.chat);
+      if (S.chatOpen) markRead(); else if (unread() > before) buzz([30, 30, 30]);
+      renderChatBadge(); if (S.chatOpen) renderChat();
+    }
+  } catch { /* next time */ }
+}
+async function flushChat() {
+  while (S.chatQ.length && S.famId) {
+    try {
+      const m = await api(`/api/chat/${S.famId}`, { method: 'POST', body: S.chatQ[0] });
+      S.chat = [...S.chat.filter((x) => x.id !== m.id), m].sort((a, b) => a.t - b.t);
+      cached.save('chat', S.chat);
+    } catch (e) { if (e.status !== 400) break; } // keep it for later, unless the server says it's invalid
+    S.chatQ.shift(); store.set('chatq', S.chatQ);
+  }
+  if (S.chatOpen) renderChat();
+}
+function sendChat(body) {
+  const m = { id: rnd(12), t: Date.now(), person: meId(), device, ...body };
+  S.chatQ.push(m); store.set('chatq', S.chatQ);
+  buzz(); if (S.chatOpen) renderChat();
+  flushChat();
+}
+function markRead() { S.chatRead = Math.max(S.chatRead, S.chat.at(-1)?.t || 0); store.set('chatRead', S.chatRead); renderChatBadge(); }
+function renderChatBadge() {
+  const n = unread(); const b = $('#chatBadge');
+  if (b) { b.textContent = n > 9 ? '9+' : n; b.hidden = !n; }
+  $('#chatBtn')?.setAttribute('aria-label', n ? `Gezinschat, ${n} nieuw` : 'Gezinschat');
+}
+function openChat() {
+  S.chatOpen = true; $('#chat').hidden = false;
+  $('#chat').innerHTML = `<div class="ch-head"><h2>💬 Gezinschat</h2><button data-go="chatclose" aria-label="Sluiten">✕</button></div>
+    <div class="ch-list" id="chList" aria-live="polite"></div>
+    <div class="ch-quick">${QUICK.map((q) => `<button data-quick="${esc(q)}">${esc(q)}</button>`).join('')}<button data-go="chatloc">📍 Deel mijn plek</button></div>
+    <form id="chatForm" class="ch-form"><input type="text" name="text" maxlength="500" placeholder="Bericht aan het gezin…" autocomplete="off" aria-label="Bericht"><button class="primary" type="submit" aria-label="Versturen">➤</button></form>`;
+  openDialog($('#chat'));
+  renderChat(); markRead(); loadChat(); flushChat();
+  clearInterval(openChat.timer); openChat.timer = setInterval(() => { if (!document.hidden) loadChat(); }, 4000);
+}
+function closeChat() { S.chatOpen = false; clearInterval(openChat.timer); $('#chat').hidden = true; closeDialog($('#chat')); renderChatBadge(); }
+function renderChat() {
+  const list = $('#chList'); if (!list) return;
+  const all = [...S.chat, ...S.chatQ.map((m) => ({ ...m, t: m.t || Date.now(), pending: true }))];
+  let lastDay = '';
+  list.innerHTML = all.length ? all.map((m) => {
+    const mine = m.device === device;
+    const day = new Date(m.t).toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long' });
+    const sep = day !== lastDay ? `<p class="ch-day">${esc(day)}</p>` : ''; lastDay = day;
+    const body = m.kind === 'loc'
+      ? `<b>📍 Hier ben ik${m.near ? ` · bij ${esc(m.near)}` : ''}</b>${m.text ? `<br>${esc(m.text)}` : ''}${mine ? '' : `<br><button class="ch-go" data-chatgo="${esc(m.id)}">🧭 Breng me erheen (${mins(walkOf(m))})</button>`}`
+      : esc(m.text);
+    return `${sep}<div class="ch-msg ${mine ? 'mine' : ''}"><span class="ch-who">${esc(msgName(m))} · ${m.pending ? '⏳' : hhmm(m.t)}</span><div class="ch-bubble">${body}</div></div>`;
+  }).join('') : '<p class="empty">Nog geen berichten. Zeg iets tegen het gezin, of deel je plek als jullie gesplitst zijn.</p>';
+  list.scrollTop = list.scrollHeight;
+}
+
 // ---------- car and lost child
 function carSheet() {
   const c = S.fam.car;
@@ -1266,6 +1338,8 @@ document.addEventListener('click', async (e) => {
   if (d.tab) { S.tab = d.tab; buzz(); closeSheet(); render(); scrollTo(0, 0); return; }
   if (d.mapmode) { S.mapMode = d.mapmode; renderMapView(); return; }
   if (d.tview) { openViewer(+d.tview); return; }
+  if (d.quick) { sendChat({ kind: 'text', text: d.quick }); return; }
+  if (d.chatgo) { const m = S.chat.find((x) => x.id === d.chatgo); if (m) { closeChat(); guideTap({ kind: 'meet', id: 'chat-' + m.id, name: `Naar ${msgName(m)}`, icon: '📍', lat: m.lat, lon: m.lon }); } return; }
   if (d.photo) { openPhoto(d.photo); return; }
   if (d.tdel) {
     const id = d.tdel;
@@ -1312,6 +1386,14 @@ document.addEventListener('click', async (e) => {
     case 'ate': await act({ type: 'ate' }); closeSheet(); if (S.guide) closeGuide(); toast('Smakelijk! 😋'); break;
     case 'sheetclose': closeSheet(); break;
     case 'stickers': stickerSheet(); break;
+    case 'chat': openChat(); break;
+    case 'chatclose': closeChat(); break;
+    case 'chatloc': {
+      const here = S.manual && Date.now() - S.manual.t < 20 * 60e3 ? S.manual : S.gps && !S.sim ? S.gps : null;
+      if (!here) { toast('Geen locatie: zet GPS aan of kies je plek op de kaart'); break; }
+      sendChat({ kind: 'loc', lat: +here.lat.toFixed(6), lon: +here.lon.toFixed(6), near: nearest(here), text: '' });
+      break;
+    }
     case 'tvclose': closeViewer(); break;
     case 'story': openStory(); break;
     case 'storyclose': $('#story').hidden = true; closeDialog($('#story')); break;
@@ -1382,7 +1464,7 @@ function celebrate() {
 }
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (!$('#pview').hidden) closePhoto(); else if (!$('#story').hidden) { $('#story').hidden = true; closeDialog($('#story')); }
+    if (!$('#chat').hidden) closeChat(); else if (!$('#pview').hidden) closePhoto(); else if (!$('#story').hidden) { $('#story').hidden = true; closeDialog($('#story')); }
     else if (!$('#tview').hidden) closeViewer(); else if (!$('#sheet').hidden) closeSheet(); else if (S.guide) closeGuide();
   }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('g.pin')) {
@@ -1416,6 +1498,7 @@ document.addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   if (f.id === 'joinForm') { await joinFamily(f.link.value); return; }
+  if (f.id === 'chatForm') { const v = f.text.value.trim(); if (v) { sendChat({ kind: 'text', text: v.slice(0, 500) }); f.text.value = ''; } f.text.focus(); return; }
   if (f.id === 'obForm') {
     const ps = people().map((p) => ({ ...p, name: (f[p.id]?.value || '').trim() || p.name }));
     const me = f.querySelector('[name=me]:checked')?.value;
@@ -1444,7 +1527,7 @@ document.addEventListener('touchend', (e) => {
   if (swipeIn === 't') { tv.i = Math.max(0, Math.min(shownTickets().length - 1, tv.i + (dx < 0 ? 1 : -1))); tv.page = false; drawViewer(); }
   if (swipeIn === 'p') { pv.i = Math.max(0, Math.min(albumItems().length - 1, pv.i + (dx < 0 ? 1 : -1))); drawPhoto(); }
 });
-addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); processUploads(); });
+addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); processUploads(); flushChat(); loadChat(); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   loadLive(); pollFamily();
@@ -1456,6 +1539,7 @@ async function afterFamily() {
   recompute(); render();
   await loadLive();
   flushOutbox(); syncTickets(); loadAlbum().then(processUploads); syncPushFamily();
+  renderChatBadge(); flushChat(); loadChat();
 }
 (async function start() {
   S.outbox = store.get('outbox', []);
@@ -1486,6 +1570,7 @@ async function afterFamily() {
     if (go && byId[go]) { S.tab = 'now'; render(); rideSheet(go); }
     if (url.searchParams.get('food')) foodSheet();
     if (url.searchParams.get('tickets')) { S.tab = 'tickets'; render(); }
+    if (url.searchParams.get('chat')) openChat();
   } catch (err) {
     console.error(err);
     $('#view-now').innerHTML = `<div class="card"><h2>${S.auth ? 'Even opnieuw inloggen' : 'Oei, dat lukte niet'}</h2><p class="muted">${S.auth ? 'Je sessie is verlopen.' : 'Geen verbinding en nog geen opgeslagen gegevens op deze gsm.'}</p><button class="primary" data-go="relogin">Opnieuw</button></div>`

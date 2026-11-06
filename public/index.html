@@ -24,6 +24,7 @@
   <div class="brand"><img src="icon.svg" alt="" width="28" height="28"> Pretpark</div>
   <div class="hdr-right">
     <div class="live" id="livePill" aria-live="polite">…</div>
+    <button class="hdr-chat" id="chatBtn" data-go="chat" aria-label="Gezinschat"><span aria-hidden="true">💬</span><span class="badge" id="chatBadge" hidden>0</span></button>
     <label class="hdr-cam" title="Foto nemen"><input type="file" id="hdrCam" accept="image/*" capture="environment" hidden><span aria-hidden="true">📸</span><span class="sr">Foto nemen voor het album</span></label>
   </div>
 </header>
@@ -48,6 +49,9 @@
 
 <!-- full-screen walking guide -->
 <div id="guide" class="guide" hidden role="dialog" aria-modal="true" aria-label="Wandelgids"></div>
+
+<!-- family chat -->
+<div id="chat" class="chat" hidden role="dialog" aria-modal="true" aria-label="Gezinschat"></div>
 
 <!-- first start: new family or join one, names, who am I -->
 <div id="onboard" class="onboard" hidden role="dialog" aria-modal="true" aria-label="Welkom"></div>
