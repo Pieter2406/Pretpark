@@ -148,3 +148,20 @@ No accounts; knowing the family id is the access.
   name or code says parking/parkeer/stationnement). It sorts first in the viewer and shows "🚗 Parkeerticket".
 - `parkingCard()` shows "buy" or "staat klaar · Toon" on the Tickets tab, in the car sheet and on Nu until 30 min
   after opening.
+
+## In the queue (rij-modus)
+- "⏳ In de rij" sends `queue` {part, wait}: `target.q[part] = { t, w: posted wait, g: guesses }` (a split has two queues;
+  `target.queued` is kept for old clients). Nu then shows `queueCard()` instead of the plan ticket: countdown
+  (posted wait × `waitFactor`, minus time in line), progress bar, "🎢 We zijn aan de beurt!" (`board`), game tiles and
+  "Hierna waarschijnlijk" (`nextAfter`: the planner run from the ride's exit with the ride counted as done).
+- `board` measures the real wait into `fam.waits` ({id, w, m, t, win}, last 40); without it, `done` estimates it as
+  queue → done minus ride time and 2 min. `waitFactor(waits)` in logic.js = median measured/posted (≥2 samples, last
+  12 h, clamped 0.5–1.3) and scales the wait in the planner's minutes (the shown wait stays the posted one).
+- Games: 🔮 `guess` {part, person, min} (debounced in the app; the closest guess wins at `board`), 🎃 photo quests
+  (`QUESTS` in fun.js; the photo's caption is the quest, shown in the album and the story), 🧠 facts + quiz (`FACTS` in
+  fun.js, sourced; `quiz` {person, q, ok}: a question counts once per person, points all day), 📣 "Seintje" (split
+  only): a chat message with the time they'll be at the meeting point, rounded up to 5 min.
+- After "Gedaan": `rateSheet` (😍 3 / 🙂 2 / 😬 1 per person who rode on this phone's side → `rate`) + the photo button.
+  `RATE_MUL` in logic.js multiplies that person's enjoyment of the ride (😍 ×1.7 partly undoes the done decay).
+- "Ons dagverslag" shows toppers (ratings), the quiz champion and the queue minutes / best guesser (`storyFun`).
+- The cron sends no "👉 Nu ideaal" while a queue of the current target is younger than 90 min.

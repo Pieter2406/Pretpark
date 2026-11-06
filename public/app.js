@@ -1,7 +1,8 @@
 // Pretpark: the screens. State lives in S; changes call render(). The shared family state lives on the server
 // (family.js actions, versioned by `updated`); wait times come from /api/live; walking routes from route.js.
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
-import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight } from './logic.js';
+import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor } from './logic.js';
+import { QUESTS, FACTS } from './fun.js';
 import { makePark, pathLength, bearingXY } from './route.js';
 import { apply, phoneOf } from './family.js';
 import { idb } from './idb.js';
@@ -206,7 +207,7 @@ function onGps(p) {
   const here = pos();
   if (!lastPlanPos || distM(lastPlanPos, here) > 12) { recompute(); render(); }
   else if (S.guide) { S.here = S.park.fromHere(here); updateGuide(); } // the guide follows every fix, the plan only every 12 m
-  if (!S.sim && (!lastPost.p || (distM(lastPost.p, here) > 25 && Date.now() - lastPost.t > 60e3) || Date.now() - lastPost.t > 180e3)) {
+  if (S.famId && !S.sim && (!lastPost.p || (distM(lastPost.p, here) > 25 && Date.now() - lastPost.t > 60e3) || Date.now() - lastPost.t > 180e3)) {
     lastPost = { t: Date.now(), p: here };
     act({ type: 'pos', device, lat: here.lat, lon: here.lon }, true);
   }
@@ -258,13 +259,16 @@ function recompute() {
   const here = pos();
   lastPlanPos = here;
   S.here = S.park.fromHere(here);
-  const minutesLeft = S.live?.close ? Math.round((S.live.close - Date.now()) / 60e3) : null;
   const closed = S.live?.close && Date.now() > S.live.close; // after closing time: nothing to suggest
-  S.plans = S.live && !closed ? plans({
-    people: people(), favs: S.fam.favs || [], done: S.fam.done || {}, live: S.live, walk: (a) => S.here.metres(a),
+  S.plans = S.live && !closed ? plans({ ...planCtx(), walk: (a) => S.here.metres(a) }) : [];
+}
+function planCtx() {
+  const minutesLeft = S.live?.close ? Math.round((S.live.close - Date.now()) / 60e3) : null;
+  return {
+    people: people(), favs: S.fam.favs || [], done: S.fam.done || {}, rates: S.fam.rates || {}, waitFactor: waitFactor(S.fam.waits), live: S.live,
     month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null, rain: raining(S.live), walkPref: S.fam.walk,
-    clock: S.live.close ? { now: new Date().getHours() * 60 + new Date().getMinutes(), close: new Date().getHours() * 60 + new Date().getMinutes() + Math.round((S.live.close - Date.now()) / 60e3) } : null,
-  }) : [];
+    clock: S.live?.close ? { now: new Date().getHours() * 60 + new Date().getMinutes(), close: new Date().getHours() * 60 + new Date().getMinutes() + minutesLeft } : null,
+  };
 }
 const walkOf = (x) => (S.here ? S.here.metres(x) : distM(pos(), x) * 1.35);
 // A concrete place to rest near the meeting point: the playground (with a toddler) or the nearest seats
@@ -310,11 +314,11 @@ function planActions(plan, chosen) {
   if (!chosen) return `<button class="primary big" data-go="choose:0">🧭 Doen! Breng me erheen</button>`;
   const t = S.fam.target;
   const mine = plan.parts.indexOf(myPart(plan));
-  const queued = t.queued ? `<p class="queued">⏳ In de rij sinds ${hhmm(t.queued)} (${Math.max(0, Math.round((Date.now() - t.queued) / 60e3))} min)</p>` : '';
+  const queued = t.queued && !t.q ? `<p class="queued">⏳ In de rij sinds ${hhmm(t.queued)} (${Math.max(0, Math.round((Date.now() - t.queued) / 60e3))} min)</p>` : '';
   const ready = plan.type === 'split'
     ? (t.ready?.[mine] ? '<button disabled>✅ Gemeld: wij zijn klaar</button>' : '<button data-go="ready">✅ Wij zijn klaar</button>') : '';
   return `${queued}<button class="primary big" data-go="guide">🧭 Breng me erheen</button>
-    <div class="row3">${t.queued ? '' : '<button data-go="queue">⏳ In de rij</button>'}<button data-go="done">✓ Gedaan</button><button data-go="untarget">✕ Iets anders</button></div>
+    <div class="row3">${t.q?.[mine] || plan.parts[mine]?.rest ? '' : '<button data-go="queue">⏳ In de rij</button>'}<button data-go="done">✓ Gedaan</button><button data-go="untarget">✕ Iets anders</button></div>
     ${ready ? `<div class="row1">${ready}</div>` : ''}`;
 }
 function ticket(plan, chosen) {
@@ -340,7 +344,7 @@ function ticket(plan, chosen) {
   const halves = plan.parts.map((pt, i) => {
     const isMine = pt === mine;
     const who = pt.group.map((id) => chip(id)).join('');
-    const done = t?.ready?.[i] ? '<span class="chip ok">✅ klaar</span>' : '';
+    const done = t?.ready?.[i] ? '<span class="chip ok">✅ klaar</span>' : t?.q?.[i]?.b ? '<span class="chip">🎢 aan de beurt</span>' : t?.q?.[i] ? `<span class="chip">⏳ in de rij sinds ${hhmm(t.q[i].t)}</span>` : '';
     if (pt.rest) {
       const r = restSpot(meet);
       return `<div class="half ${isMine ? 'mine' : ''}"><div class="who">${who}${done}</div><h3>${r?.icon || '🪑'} Even rusten</h3>
@@ -417,7 +421,7 @@ function renderNow() {
   const t = S.fam.target;
   if (t?.plan) {
     const ago = Math.round((Date.now() - t.setAt) / 60e3);
-    html += `<p class="kicker">Jullie plan · ${ago < 1 ? 'net gekozen' : ago + ' min geleden'}</p>` + ticket(t.plan, true);
+    html += queueCard() || `<p class="kicker">Jullie plan · ${ago < 1 ? 'net gekozen' : ago + ' min geleden'}</p>` + ticket(t.plan, true);
   } else if (!S.live) {
     html += '<p class="kicker">Doe nu dit</p><div class="ticket"><div class="what"><p class="empty">Wachttijden laden…</p></div></div>';
   } else if (!S.plans.length) {
@@ -782,7 +786,7 @@ function updateGuide(full) {
     el.innerHTML = `<div class="head">${gphoto ? `<img class="gthumb" src="${gphoto}" alt="">` : `<span class="ic" aria-hidden="true">${g.icon}</span>`}<h2 id="guideTitle">${esc(g.name)}</h2>
         ${st ? waitBadge(g.id) : ''}<button data-go="voice" aria-pressed="${S.voice}" aria-label="Gesproken aanwijzingen">${S.voice ? '🔊' : '🔈'}</button><button data-go="guideclose" aria-label="Sluiten">✕</button></div>
       ${arrived ? `<div class="arrived"><b>Je bent er! 🎉</b><span class="muted">${g.kind === 'ride' ? 'Veel plezier!' : g.kind === 'ride-solo' ? 'Veel plezier!' : g.kind === 'meet' ? 'Rust even, de anderen komen hierheen.' : ''}</span>
-          ${g.kind === 'ride' && S.fam.target && !S.fam.target.queued ? '<button class="big" data-go="queue" style="margin-top:10px">⏳ We staan in de rij</button>' : ''}</div>`
+          ${g.kind === 'ride' && S.fam.target && !S.fam.target.q?.[myIdx(S.fam.target.plan)] ? '<button class="big" data-go="queue" style="margin-top:10px">⏳ We staan in de rij</button>' : ''}</div>`
       : `<div class="arrowbox"><div class="arrow ${hasHeading ? '' : 'unknown'}"><svg viewBox="-50 -50 100 100" aria-hidden="true" id="arrowSvg"><path d="M0 -44 L30 18 L0 6 L-30 18 Z" fill="${hasHeading ? '#fff' : 'var(--accent)'}" stroke="${hasHeading ? '#fff' : 'var(--accent)'}" stroke-width="6" stroke-linejoin="round"/></svg></div>
           <div class="dist"><b id="distTxt">${Math.round(dist)} m</b><span id="minTxt">± ${walkMin(dist)} min stappen</span></div></div>
         <p class="say" id="sayTxt" aria-live="polite"></p>
@@ -989,6 +993,198 @@ function photoMoment(ids) {
   clearTimeout(photoMoment.t); photoMoment.t = setTimeout(() => { if ($('#sheet').innerHTML.includes('id="camIn"')) closeSheet(); }, 20000);
 }
 
+// ---------- in the queue: countdown, "it's our turn", tell the others, photo quest, facts + quiz, guess the wait.
+// All of it works without signal (actions go through the outbox; facts and quests are in fun.js).
+const myIdx = (plan) => plan.parts.indexOf(myPart(plan));
+function myQueue() {
+  const t = S.fam?.target; if (!t?.plan) return null;
+  const i = myIdx(t.plan), pt = t.plan.parts[i], q = t.q?.[i];
+  if (!q || !pt || pt.rest) return null;
+  const a = byId[pt.id]; if (!a) return null;
+  return { t, i, pt, q, a };
+}
+// the wait posted when we joined, corrected with the family's measured waits today
+function queueLeft(Q) {
+  const posted = Q.q.w ?? status(S.live, Q.a.id).wait ?? Q.pt.wait ?? 10;
+  const est = posted * waitFactor(S.fam.waits);
+  const gone = (Date.now() - Q.q.t) / 60e3;
+  return { est: Math.round(est), gone: Math.max(0, Math.floor(gone)), left: Math.max(0, Math.round(est - gone)), frac: est ? Math.min(1, gone / est) : 1 };
+}
+const groupOf = (Q) => (Q ? Q.pt.group : people().map((p) => p.id)).map(person).filter(Boolean);
+const quizPts = (pid) => num(S.fam?.quiz?.[pid]?.pts);
+const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+// best guess of the real wait (same rule as family.js addWait)
+function guessWinner(g, m) {
+  let win = null;
+  for (const [pid, v] of Object.entries(g || {})) if (!win || Math.abs(v - m) < Math.abs(win[1] - m)) win = [pid, v];
+  return win;
+}
+// what the planner would suggest when we come off this ride (from its exit, counting it as done)
+function nextAfter(a) {
+  if (!S.live || !S.park || !S.fam) return null;
+  const k = `${a.id}:${S.live.t}:${JSON.stringify(S.fam.done)}:${meId()}`;
+  if (nextAfter.k === k) return nextAfter.v;
+  let v = null;
+  try {
+    const from = S.park.fromHere(a);
+    const ps = plans({ ...planCtx(), done: { ...(S.fam.done || {}), [a.id]: num(S.fam.done?.[a.id]) + 1 }, walk: (x) => from.metres(x) });
+    const pt = ps[0] && (ps[0].parts.find((x) => x.group.includes(meId()) && !x.rest) || ps[0].parts.find((x) => !x.rest));
+    if (pt && byId[pt.id]) v = { a: byId[pt.id], wait: status(S.live, pt.id).wait ?? pt.wait };
+  } catch { v = null; }
+  nextAfter.k = k; nextAfter.v = v;
+  return v;
+}
+function questFor(Q) {
+  const done = store.get('questsDone', []);
+  const list = QUESTS.filter((x) => !done.includes(x));
+  const pool = list.length ? list : QUESTS;
+  return pool[(Math.floor(Q.q.t / 1000) + num(S.questSkip)) % pool.length];
+}
+function queueCard() {
+  const Q = myQueue(); if (!Q) return '';
+  const { a, q, t } = Q;
+  const split = t.plan.type === 'split';
+  const meet = split ? byId[t.plan.meet] : null;
+  const tail = `${meet ? `<div class="meet">📍 Daarna afspreken aan de uitgang van <b>${esc(meet.name)}</b></div>` : ''}
+    <div class="row2"><button data-go="done">✓ Gedaan</button><button data-go="untarget">✕ Iets anders</button></div>`;
+  if (q.b) {
+    const m = Math.max(1, Math.round((q.b - q.t) / 60e3));
+    const win = guessWinner(q.g, m);
+    return `<section class="qcard on" aria-label="Aan de beurt"><p class="kicker">🎢 Aan de beurt</p>
+      <h2>${icon(a)} ${esc(a.name)}: veel plezier!</h2>
+      <p>Jullie stonden <b>${m} min</b> in de rij${q.w != null ? ` (aangekondigd: ${num(q.w)} min)` : ''}.${win ? `<br>🏆 <b>${esc(person(win[0])?.name || '')}</b> zat er het dichtst bij met ${num(win[1])} min!` : ''}</p>
+      <button class="primary big" data-go="done">✓ Gedaan: we zijn eraf</button>${tail.replace(/<div class="row2">.*<\/div>/s, '')}</section>`;
+  }
+  const L = queueLeft(Q);
+  const now = status(S.live, a.id).wait;
+  const nG = Object.keys(q.g || {}).length;
+  const facts = FACTS[a.name];
+  const nQ = Object.values(FACTS).reduce((s, f) => s + (f.quiz?.length || 0), 0);
+  const next = nextAfter(a);
+  const pct = Math.round(L.frac * 100);
+  return `<section class="qcard" aria-label="In de rij"><p class="kicker">⏳ In de rij · ${esc(a.name)}</p>
+    <div class="qtop">${photoSrc(a) ? `<img class="qph" src="${photoSrc(a)}" alt="">` : `<span class="qph ic" aria-hidden="true">${a.icon}</span>`}
+      <div class="qtime" aria-live="polite">${L.left ? `<b>±${L.left}</b><span>min nog</span>` : '<b>Bijna!</b><span>nog even</span>'}</div></div>
+    <div class="qbar" role="progressbar" aria-label="Rij" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
+    <p class="small muted">Al ${L.gone} min in de rij · aangekondigd ${q.w != null ? num(q.w) + ' min' : 'onbekend'}${now != null ? ` · nu ${num(now)} min` : ''}</p>
+    <button class="primary big" data-go="board">🎢 We zijn aan de beurt!</button>
+    <div class="qgames">
+      ${nQ ? `<button data-go="quiz"><span aria-hidden="true">🧠</span><b>Weetjes &amp; quiz</b><i>${facts ? `Over ${esc(a.name)}` : 'Over Walibi'}</i></button>` : ''}
+      <button data-go="quest"><span aria-hidden="true">🎃</span><b>Foto-opdracht</b><i>${esc(questFor(Q))}</i></button>
+      <button data-go="guess"><span aria-hidden="true">🔮</span><b>Raad de wachttijd</b><i>${nG ? `${nG} ${nG === 1 ? 'gok' : 'gokken'} binnen` : 'Wie zit het dichtst?'}</i></button>
+      ${split ? '<button data-go="signal"><span aria-hidden="true">📣</span><b>Seintje aan de anderen</b><i>Wanneer we klaar zijn</i></button>'
+        : '<button data-go="chat"><span aria-hidden="true">💬</span><b>Gezinschat</b><i>Berichtje sturen</i></button>'}
+    </div>
+    ${next ? `<p class="small muted qnext">Hierna waarschijnlijk: ${next.a.icon} <b>${esc(next.a.name)}</b>${next.wait != null ? ` (${num(next.wait)} min wachten)` : ''}. Bij “Gedaan” kijk ik opnieuw.</p>` : ''}
+    ${tail}</section>`;
+}
+// "we're done around 14:35 at the exit of X", rounded up to 5 minutes, sent to the family chat (and pushed)
+function signalOthers() {
+  const Q = myQueue(); if (!Q) return;
+  const L = queueLeft(Q), meet = byId[Q.t.plan.meet];
+  const walk = meet && meet.id !== Q.a.id ? walkMin(distM(Q.a, meet) * 1.35) : 0;
+  const at = Math.ceil((Date.now() + (L.left + Q.a.ride + 2 + walk) * 60e3) / 300e3) * 300e3;
+  sendChat({ kind: 'text', text: `⏳ Wij staan in de rij voor ${Q.a.name}${L.left ? `, nog ±${L.left} min` : ', bijna aan de beurt'}. Rond ${hhmm(at)} zijn we ${meet ? `aan de uitgang van ${meet.name}` : 'klaar'}.` });
+  buzz(); toast(`📣 Seintje verstuurd: rond ${hhmm(at)}`);
+}
+function questSheet() {
+  const Q = myQueue(); const quest = Q ? questFor(Q) : QUESTS[num(S.questSkip) % QUESTS.length];
+  S.quest = quest;
+  openSheet(`<h2>🎃 Foto-opdracht</h2><p class="quest">${esc(quest)}</p>
+    <p class="small muted">De foto komt in jullie album en in “Ons dagverslag”, met de opdracht erbij.</p>
+    <label class="filebtn solid big"><input type="file" id="questIn" accept="image/*" capture="environment" hidden><span>📸 Foto nemen</span></label>
+    <div class="row2"><button data-go="questskip">🔄 Andere opdracht</button><button data-go="sheetclose">Sluiten</button></div>`);
+}
+function quizList() {
+  return Object.entries(FACTS).flatMap(([name, f]) => (f.quiz || []).map((x, i) => ({ ...x, id: `${slug(name)}-${i}`, ride: name })));
+}
+function quizSheet(answered) {
+  const Q = myQueue();
+  const group = groupOf(Q);
+  if (!group.some((p) => p.id === S.quizWho)) S.quizWho = (group.find((p) => p.kind === 'child' && p.height >= 110) || group.find((p) => p.kind === 'child') || group[0])?.id;
+  const pid = S.quizWho;
+  const a = Q?.a;
+  const seen = new Set([...(S.fam.quiz?.[pid]?.ids || []), ...(S.quizSeen?.[pid] || [])]); // + answers still on their way
+  const all = quizList();
+  // this ride's questions first, then the others in a fixed shuffled order (the same on both phones)
+  const order = [...all.filter((x) => x.ride === a?.name), ...all.filter((x) => x.ride !== a?.name).sort((x, y) => slug(x.id + 'w').localeCompare(slug(y.id + 'w')) * (x.id.length % 2 ? 1 : -1))];
+  const q = answered || order.find((x) => !seen.has(x.id));
+  const facts = (a && FACTS[a.name]?.facts) || [];
+  const other = Object.entries(FACTS).filter(([n, f]) => n !== a?.name && f.facts?.length);
+  const extra = !facts.length && other.length ? other[Math.floor(Date.now() / 60e3) % other.length] : null;
+  const factBox = facts.length ? `<div class="facts"><h3>Wist je dat… over ${esc(a.name)}</h3><ul>${facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>`
+    : extra ? `<div class="facts"><h3>Wist je dat… over ${esc(extra[0])}</h3><ul>${extra[1].facts.slice(0, 2).map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>` : '';
+  const board = group.map((p) => `<button data-quizwho="${p.id}" aria-pressed="${p.id === pid}">${emoji(p)} ${esc(p.name)} <b>${quizPts(p.id)}</b></button>`).join('');
+  const quiz = q ? `<div class="quiz"><p class="small muted">Vraag over ${esc(q.ride)}</p><h3>${esc(q.q)}</h3>
+      <div class="qopts">${q.options.map((o, i) => {
+        const cls = answered ? (i === q.answer ? 'right' : i === answered.picked ? 'wrong' : '') : '';
+        return `<button data-quizans="${i}" class="${cls}" ${answered ? 'disabled' : ''}>${esc(o)}</button>`;
+      }).join('')}</div>
+      ${answered ? `<p class="why">${answered.picked === q.answer ? '🎉 Juist! +1 punt.' : '❌ Helaas.'} ${esc(q.why || '')}</p><button class="primary" data-go="quiznext" style="width:100%">Volgende vraag ›</button>` : ''}</div>`
+    : '<p class="quest">Alle vragen beantwoord! 🎉 Kies iemand anders om verder te spelen.</p>';
+  S.quizQ = answered ? null : q;
+  openSheet(`<h2>🧠 Weetjes &amp; quiz</h2>${factBox}
+    <p class="small muted" style="margin:12px 0 6px">Wie speelt? Punten tellen de hele dag.</p>
+    <div class="quizwho" role="group" aria-label="Wie speelt">${board}</div>${quiz}
+    <button data-go="sheetclose" style="width:100%;margin-top:12px">Sluiten</button>`);
+}
+function guessSheet() {
+  const Q = myQueue(); if (!Q) return;
+  const g = { ...(Q.q.g || {}), ...(S.gdraft || {}) };
+  openSheet(`<h2>🔮 Raad de wachttijd</h2>
+    <p class="small muted">Hoeveel minuten staan jullie écht in de rij? Aangekondigd was ${Q.q.w != null ? num(Q.q.w) + ' min' : 'onbekend'}. Tik op “We zijn aan de beurt” als het zover is: wie het dichtst zit, wint.</p>
+    <div class="guesses">${groupOf(Q).map((p) => `<div class="guess"><span class="gname">${emoji(p)} ${esc(p.name)}</span>
+      <span class="gctl"><button data-guess="${p.id}:-5" aria-label="5 minuten minder">−5</button><button data-guess="${p.id}:-1" aria-label="1 minuut minder">−1</button>
+      <b id="g-${p.id}" aria-live="polite">${g[p.id] != null ? num(g[p.id]) : '?'}</b>
+      <button data-guess="${p.id}:1" aria-label="1 minuut meer">+1</button><button data-guess="${p.id}:5" aria-label="5 minuten meer">+5</button></span></div>`).join('')}</div>
+    <button class="primary" data-go="sheetclose" style="width:100%;margin-top:12px">Klaar</button>`);
+}
+function guessTap(pid, d) {
+  const Q = myQueue(); if (!Q) return;
+  S.gdraft = S.gdraft || {};
+  const cur = S.gdraft[pid] ?? Q.q.g?.[pid] ?? Q.q.w ?? 15;
+  const v = Math.min(240, Math.max(1, (S.gdraft[pid] == null && Q.q.g?.[pid] == null ? cur : cur + d)));
+  S.gdraft[pid] = v; buzz();
+  const el = $('#g-' + pid); if (el) el.textContent = v;
+  clearTimeout(guessTap.t);
+  guessTap.t = setTimeout(async () => {
+    const draft = S.gdraft; S.gdraft = null;
+    for (const [p, m] of Object.entries(draft || {})) await act({ type: 'guess', part: Q.i, person: p, min: m }, true);
+    if (S.tab === 'now') renderNow();
+  }, 900);
+}
+// after "Gedaan": how was it? (per person who rode on this phone's side) + the photo moment
+function rateSheet(id, who) {
+  const a = byId[id]; if (!a) return;
+  const ps = who.map(person).filter(Boolean);
+  if (!ps.length) { photoMoment([id]); return; }
+  const r = S.fam.rates?.[id] || {};
+  openSheet(`<h2>${icon(a)} Hoe was ${esc(a.name)}?</h2>
+    <div class="rates">${ps.map((p) => `<div class="rate"><span>${emoji(p)} ${esc(p.name)}</span><span class="faces" role="group" aria-label="${esc(p.name)}">${[[3, '😍', 'Super, nog eens!'], [2, '🙂', 'Leuk'], [1, '😬', 'Liever niet meer']].map(([v, e, l]) => `<button data-rate="${id}:${p.id}:${v}" aria-pressed="${r[p.id] === v}" aria-label="${l}" title="${l}">${e}</button>`).join('')}</span></div>`).join('')}</div>
+    <p class="small muted">😍 = graag nog eens · 😬 = liever niet meer. Het plan houdt er rekening mee.</p>
+    <label class="filebtn solid big"><input type="file" id="camIn" accept="image/*" capture="environment" hidden><span>📸 Foto voor het dagverslag</span></label>
+    <button data-go="sheetclose" style="width:100%">Verder</button>`);
+}
+// the day's fun for "Ons dagverslag": best rides, quiz champion, guessing game, measured waits
+function storyFun() {
+  const out = [];
+  const rated = Object.entries(S.fam?.rates || {}).map(([id, r]) => { const v = Object.values(r); return { a: byId[id], r, avg: v.reduce((s, x) => s + x, 0) / v.length, n: v.length }; })
+    .filter((x) => x.a).sort((x, y) => y.avg - x.avg || y.n - x.n).slice(0, 5);
+  const face = { 3: '😍', 2: '🙂', 1: '😬' };
+  if (rated.length) out.push(`<section class="st-fun"><h3>🏆 Onze toppers</h3><ol>${rated.map((x) => `<li>${x.a.icon} <b>${esc(x.a.name)}</b> <span>${Object.entries(x.r).map(([pid, v]) => `<span title="${esc(person(pid)?.name || '')}">${face[v]}</span>`).join('')}</span></li>`).join('')}</ol></section>`);
+  const qz = people().map((p) => ({ p, ...(S.fam?.quiz?.[p.id] || {}) })).filter((x) => x.n).sort((x, y) => y.pts - x.pts);
+  if (qz.length) out.push(`<section class="st-fun"><h3>🧠 Quizkampioen</h3><ol>${qz.map((x, i) => `<li>${i === 0 ? '👑' : emoji(x.p)} <b>${esc(x.p.name)}</b> <span>${num(x.pts)} van ${num(x.n)} juist</span></li>`).join('')}</ol></section>`);
+  const ws = S.fam?.waits || [];
+  if (ws.length) {
+    const wins = {}; for (const w of ws) if (w.win) wins[w.win] = (wins[w.win] || 0) + 1;
+    const real = ws.reduce((s, w) => s + w.m, 0), posted = ws.filter((w) => w.w != null);
+    const best = Object.entries(wins).sort((x, y) => y[1] - x[1]);
+    out.push(`<section class="st-fun"><h3>⏱ In de rij</h3><p>Samen <b>${Math.round(real)} min</b> aangeschoven in ${ws.length} ${ws.length === 1 ? 'rij' : 'rijen'}${posted.length ? `; aangekondigd was ${Math.round(posted.reduce((s, w) => s + w.w, 0))} min voor ${Math.round(posted.reduce((s, w) => s + w.m, 0))} min echt` : ''}.</p>
+      ${best.length ? `<p>🔮 Beste rader: <b>${esc(person(best[0][0])?.name || '')}</b> (${best[0][1]}×)</p>` : ''}</section>`);
+  }
+  return out.join('');
+}
+
 // ---------- stickers: every ride you do is a sticker
 const stickerCount = () => ATTRACTIONS.filter((a) => S.fam?.done?.[a.id]).length;
 function stickerSheet() {
@@ -1123,7 +1319,7 @@ async function refreshUploads() {
   for (const [id, url] of thumbUrls) if (!ids.has(id)) { URL.revokeObjectURL(url); thumbUrls.delete(id); }
   S.uploads = q.map((u) => {
     if (!thumbUrls.has(u.id)) thumbUrls.set(u.id, URL.createObjectURL(u.thumb || u.file));
-    return { id: u.id, t: u.meta.t, near: u.meta.near, pending: true, src: thumbUrls.get(u.id) };
+    return { id: u.id, t: u.meta.t, near: u.meta.near, caption: u.meta.caption || '', pending: true, src: thumbUrls.get(u.id) };
   });
   if (S.tab === 'album') renderAlbum();
 }
@@ -1145,7 +1341,7 @@ async function thumbOf(file) {
   } catch { return { thumb: null, w: null, h: null }; } // e.g. HEIC in a browser that can't decode it: the original still goes up
   finally { bmp?.close?.(); }
 }
-async function addPhotos(files, fromCamera) {
+async function addPhotos(files, fromCamera, caption = '') {
   const live = S.gps && !S.sim ? S.gps : null;
   let n = 0;
   for (const file of files) {
@@ -1153,7 +1349,7 @@ async function addPhotos(files, fromCamera) {
     const t = fromCamera ? Date.now() : (file.lastModified || Date.now());
     const here = live && Math.abs(Date.now() - t) < 10 * 60e3 ? live : null; // only tag a place when it was taken just now
     const { thumb, w, h } = await thumbOf(file);
-    const meta = { t, lat: here?.lat ?? null, lon: here?.lon ?? null, near: here ? nearest(here) : '', w, h };
+    const meta = { t, lat: here?.lat ?? null, lon: here?.lon ?? null, near: here ? nearest(here) : '', w, h, ...(caption ? { caption: caption.slice(0, 200) } : {}) };
     if ((await idb.put('uploads', { id: rnd(16), file, thumb, meta })) === false) { toast('Foto bewaren lukte niet (geheugen vol?)'); continue; }
     n++;
   }
@@ -1258,8 +1454,9 @@ function openStory() {
       <div class="stats st-stats"><div class="stat"><b>${rides}</b><span>${rides === 1 ? 'ritje' : 'ritjes'}</span></div><div class="stat"><b>${items.length}</b><span>foto’s</span></div>
       <div class="stat"><b>${stickerCount()}</b><span>stickers</span></div>
       ${first ? `<div class="stat"><b>${hhmm(first)}</b><span>tot ${hhmm(last)}</span></div>` : ''}${fav ? `<div class="stat"><b>${num(fav[1])}×</b><span>${esc(byId[fav[0]]?.name || '')}</span></div>` : ''}</div></header>
+    ${storyFun()}
     <ol class="st-line">${all.map((x) => x.photo
-      ? `<li class="${x.photo.star ? 'big' : ''}"><time>${hhmm(x.t)}</time><button class="ph" data-photo="${esc(x.photo.id)}"><img src="${esc(photoUrl(x.photo.id, x.photo.star ? 'full' : 'thumb'))}" alt="" loading="lazy"></button>${x.photo.near ? `<span class="small muted">📍 ${esc(x.photo.near)}</span>` : ''}</li>`
+      ? `<li class="${x.photo.star ? 'big' : ''}"><time>${hhmm(x.t)}</time><button class="ph" data-photo="${esc(x.photo.id)}"><img src="${esc(photoUrl(x.photo.id, x.photo.star ? 'full' : 'thumb'))}" alt="" loading="lazy"></button>${x.photo.caption ? `<span class="cap">${esc(x.photo.caption)}</span>` : ''}${x.photo.near ? `<span class="small muted">📍 ${esc(x.photo.near)}</span>` : ''}</li>`
       : `<li class="ride"><time>${hhmm(x.t)}</time><span>${x.ride.icon} <b>${esc(x.ride.name)}</b></span></li>`).join('')}</ol>
     <p class="muted small" style="text-align:center;margin:24px 0">Tip: markeer je mooiste foto’s met ⭐, dan komen ze groot in het verslag.</p>`;
   $('#story').hidden = false; $('#story').scrollTop = 0; openDialog($('#story'));
@@ -1515,6 +1712,22 @@ document.addEventListener('click', async (e) => {
   if (d.filter) { S.filter = d.filter; renderList(); return; }
   if (d.fav) { buzz(); await act({ type: 'fav', id: d.fav, on: !(S.fam.favs || []).includes(d.fav) }); if (!$('#sheet').hidden && $('#sheet').querySelector(`[data-goride="${d.fav}"]`)) rideSheet(d.fav); return; }
   if (d.undo) { await act({ type: 'undo', id: d.undo }); return; }
+  if (d.quizwho) { S.quizWho = d.quizwho; quizSheet(); return; }
+  if (d.quizans != null && S.quizQ) {
+    const q = S.quizQ, picked = +d.quizans, ok = picked === q.answer;
+    S.quizSeen = S.quizSeen || {}; (S.quizSeen[S.quizWho] ||= []).push(q.id);
+    buzz(ok ? [20, 40, 20] : 60);
+    quizSheet({ ...q, picked });
+    act({ type: 'quiz', person: S.quizWho, q: q.id, ok }, true).then(() => { $('#sheet').querySelectorAll('[data-quizwho] b').forEach((b) => { b.textContent = quizPts(b.parentElement.dataset.quizwho); }); });
+    return;
+  }
+  if (d.guess) { const [pid, n] = d.guess.split(':'); guessTap(pid, +n); return; }
+  if (d.rate) {
+    const [id, pid, v] = d.rate.split(':'); buzz();
+    t.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
+    act({ type: 'rate', id, person: pid, v: +v }, true);
+    return;
+  }
   if (d.doneone) { closeSheet(); if (S.guide) closeGuide(); await act({ type: 'done', ids: [d.doneone] }); celebrate(); photoMoment([d.doneone]); return; }
   if (d.dismiss) { S.dismissed[d.dismiss] = 1; store.set('dismissed', S.dismissed); renderBanners(); return; }
   if (d.goride) { const a = byId[d.goride]; closeSheet(); guideTap({ kind: 'ride-solo', id: a.id, name: a.name, icon: a.icon, lat: a.lat, lon: a.lon }); return; }
@@ -1532,11 +1745,38 @@ document.addEventListener('click', async (e) => {
     case 'guide': if (S.fam.target?.plan) guideTap(guideTargetFor(S.fam.target.plan)); break;
     case 'guideclose': closeGuide(); break;
     case 'done': {
-      const ids = S.fam.target ? S.fam.target.plan.parts.filter((p) => !p.rest).map((p) => p.id) : S.guide ? [S.guide.id] : [];
+      const plan = S.fam.target?.plan;
+      const ids = plan ? plan.parts.filter((p) => !p.rest).map((p) => p.id) : S.guide ? [S.guide.id] : [];
+      const mine = plan ? myPart(plan) : null;
+      const rated = mine && !mine.rest ? mine.id : ids[0];
+      const who = mine && !mine.rest ? mine.ride || [] : plan ? [] : people().filter((p) => byId[rated] && canRide(p, byId[rated])).map((p) => p.id);
       if (S.guide) closeGuide();
-      await act({ type: 'done', ids }); celebrate(); scrollTo(0, 0); photoMoment(ids); break;
+      S.gdraft = null;
+      await act({ type: 'done', ids }); celebrate(); scrollTo(0, 0);
+      if (who.length && byId[rated]?.cat) rateSheet(rated, who); else photoMoment(ids);
+      break;
     }
-    case 'queue': await act({ type: 'queue' }); if (S.guide) closeGuide(); toast('⏳ Veel geduld! Tik op “Gedaan” als jullie eraf komen.'); break;
+    case 'queue': {
+      const plan = S.fam.target?.plan; if (!plan) break;
+      const i = myIdx(plan), pt = plan.parts[i];
+      await act({ type: 'queue', part: i, wait: pt?.id ? status(S.live, pt.id).wait ?? pt.wait : null });
+      if (S.guide) closeGuide(); scrollTo(0, 0);
+      toast('⏳ Rij-modus aan: spelletjes en aftellen op Nu'); break;
+    }
+    case 'board': {
+      const Q = myQueue(); if (!Q) break;
+      if (S.gdraft) { clearTimeout(guessTap.t); for (const [p, m] of Object.entries(S.gdraft)) await act({ type: 'guess', part: Q.i, person: p, min: m }, true); S.gdraft = null; }
+      await act({ type: 'board', part: Q.i }); buzz([40, 40, 80]);
+      const q = S.fam.target?.q?.[Q.i];
+      const win = q?.b && guessWinner(q.g, (q.b - q.t) / 60e3);
+      toast(win ? `🏆 ${person(win[0])?.name || ''} raadde het best!` : '🎢 Veel plezier!'); break;
+    }
+    case 'signal': signalOthers(); break;
+    case 'quest': questSheet(); break;
+    case 'questskip': S.questSkip = num(S.questSkip) + 1; questSheet(); if (S.tab === 'now') renderNow(); break;
+    case 'quiz': quizSheet(); break;
+    case 'quiznext': quizSheet(); break;
+    case 'guess': guessSheet(); break;
     case 'ready': {
       const plan = S.fam.target?.plan; if (!plan) break;
       await act({ type: 'ready', part: plan.parts.indexOf(myPart(plan)), device });
@@ -1639,6 +1879,11 @@ document.addEventListener('change', async (e) => {
   const id = e.target.id;
   if (id === 'tfile') { importTickets([...e.target.files]); return; }
   if (id === 'camIn' || id === 'hdrCam') { const f = [...e.target.files]; e.target.value = ''; if (!$('#sheet').hidden && $('#sheet').contains(e.target)) closeSheet(); addPhotos(f, true); return; }
+  if (id === 'questIn' && e.target.files[0]) {
+    const f = [...e.target.files]; e.target.value = ''; const quest = S.quest || '';
+    store.set('questsDone', [...store.get('questsDone', []), quest].slice(-40)); S.questSkip = 0;
+    closeSheet(); addPhotos(f, true, '🎃 ' + quest); if (S.tab === 'now') renderNow(); return;
+  }
   if (id === 'galIn') { addPhotos([...e.target.files], false); e.target.value = ''; return; }
   if (id === 'photoIn' && e.target.files[0]) { savePhoto(e.target.files[0]).catch(() => toast('Foto bewaren lukte niet')); return; }
   if (e.target.dataset.setting) {

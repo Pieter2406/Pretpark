@@ -146,15 +146,26 @@ export function urgencyFactor(wait, ctx) {
   const gain = Math.max(-0.5, Math.min(1.5, (later - wait) / (wait + 15)));
   return 1 + TUNE.urgency * gain;
 }
+// After a ride each person says 😍 (3), 🙂 (2) or 😬 (1). 😍 makes doing it again more attractive for that person
+// (it partly undoes the 0.35ⁿ "done" decay), 😬 makes it unattractive.
+export const RATE_MUL = { 1: 0.25, 2: 1, 3: 1.7 };
+// Posted waits vs. the waits this family really had today (queue → "aan de beurt"): the median ratio of the last
+// measurements, from 2 samples on, kept within 0.5–1.3 so one odd queue can't throw the planner off.
+export function waitFactor(waits, now = Date.now()) {
+  const r = (waits || []).filter((x) => x.w >= 5 && x.m > 0 && now - x.t < 12 * 3600e3).slice(-8).map((x) => x.m / x.w).sort((a, b) => a - b);
+  if (r.length < 2) return 1;
+  const med = r.length % 2 ? r[(r.length - 1) / 2] : (r[r.length / 2 - 1] + r[r.length / 2]) / 2;
+  return Math.min(1.3, Math.max(0.5, Math.round(med * 100) / 100));
+}
 export const WALK_WEIGHT = { normal: { heavy: 2, light: 1.2 }, low: { heavy: 6, light: 2 } };
-// ctx = { people, favs:[id], done:{id:n}, live, walk:(attraction)=>meters, minutesLeft, month, rain, walkPref }
+// ctx = { people, favs:[id], done:{id:n}, rates:{id:{person:1-3}}, waitFactor, live, walk:(attraction)=>meters, minutesLeft, month, rain, walkPref }
 function scoreOne(group, a, ctx, extraWalkM = 0) {
   const st = status(ctx.live, a.id);
   if (!st.open) return null;
   const { ride, watch, escorted } = riders(group, a);
   if (!ride.length) return null;
   // people who only watch cost something: a bored toddler more than an adult on a bench
-  let value = ride.reduce((s, p) => s + enjoy(p, a, ctx.month), 0) - watch.reduce((s, p) => s + (p.kind === 'child' ? 1.5 : 0.7), 0);
+  let value = ride.reduce((s, p) => s + enjoy(p, a, ctx.month) * RATE_MUL[ctx.rates?.[a.id]?.[p.id] ?? 2], 0) - watch.reduce((s, p) => s + (p.kind === 'child' ? 1.5 : 0.7), 0);
   const done = ctx.done?.[a.id] || 0;
   value *= Math.pow(0.35, done);
   if (ctx.favs?.includes(a.id)) value *= 2;
@@ -166,8 +177,9 @@ function scoreOne(group, a, ctx, extraWalkM = 0) {
   // tuned with sim/simulate.mjs; walk is also slower with a pregnant adult
   const ww = WALK_WEIGHT[ctx.walkPref] || WALK_WEIGHT.normal;
   const heavy = group.some((p) => p.pregnant || isToddler(p));
-  const minutes = walkMin(walkM) * (group.some((p) => p.pregnant) ? 1.25 : 1) * (heavy ? ww.heavy : ww.light) + wait * TUNE.waitWeight + a.ride;
-  if (ctx.minutesLeft != null && walkMin(walkM) + wait > ctx.minutesLeft) return null;
+  const realWait = wait * (ctx.waitFactor || 1); // posted waits corrected by what this family measured today
+  const minutes = walkMin(walkM) * (group.some((p) => p.pregnant) ? 1.25 : 1) * (heavy ? ww.heavy : ww.light) + realWait * TUNE.waitWeight + a.ride;
+  if (ctx.minutesLeft != null && walkMin(walkM) + realWait > ctx.minutesLeft) return null;
   value *= urgencyFactor(wait, ctx);
   return { a, ride, watch, escorted, value, walkM, wait, waitKnown: st.wait != null, minutes };
 }
@@ -262,7 +274,7 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   const fresh = pos && now - pos.t < 45 * 60e3;
   const here = fresh ? pos : null;
   const walk = (x) => (here ? distM(here, x) * PATH_FACTOR : 400);
-  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk, clock: parkClock(live) };
+  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, rates: fam.rates || {}, waitFactor: waitFactor(fam.waits, now), live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk, clock: parkClock(live) };
   const since = (k) => now - (memo.sent[k] || 0);
   const quiet = since('any') < 8 * 60e3;
   const nm = (id) => byId[id]?.name || 'attractie';
@@ -328,7 +340,8 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   // 5. a clearly better next step
   if (!notes.length && prefs.best !== false && !quiet && here && since('best') > 15 * 60e3) {
     const targetAge = target?.setAt ? now - target.setAt : Infinity;
-    if (targetAge > 30 * 60e3) {
+    const inQueue = Object.values(target?.q || {}).some((q) => now - q.t < 90 * 60e3); // standing in line: no "better idea"
+    if (targetAge > 30 * 60e3 && !inQueue) {
       const best = plans(ctx)[0];
       if (best && best.key !== memo.bestKey && best.parts[0].wait <= 15) {
         memo.bestKey = best.key; memo.sent.best = now;

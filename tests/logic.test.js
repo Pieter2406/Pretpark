@@ -116,3 +116,30 @@ test('sunrise and sunset at Walibi (light theme by day, dark after sunset)', asy
   assert.equal(isDaylight(new Date('2026-11-07T17:30:00+01:00')), false);
   assert.equal(isDaylight(new Date('2026-11-07T07:00:00+01:00')), false);
 });
+
+test('waitFactor: median of measured/posted, from 2 samples, clamped to 0.5–1.3', async () => {
+  const { waitFactor } = await import('../public/logic.js');
+  const now = Date.UTC(2026, 10, 7, 14);
+  const s = (w, m, ago = 60) => ({ w, m, t: now - ago * 60e3 });
+  assert.equal(waitFactor([], now), 1);
+  assert.equal(waitFactor([s(20, 10)], now), 1); // one sample isn't enough
+  assert.equal(waitFactor([s(20, 10), s(30, 21), s(10, 8)], now), 0.7);
+  assert.equal(waitFactor([s(20, 2), s(20, 3)], now), 0.5);
+  assert.equal(waitFactor([s(10, 40), s(10, 40)], now), 1.3);
+  assert.equal(waitFactor([s(3, 10), s(2, 10)], now), 1); // tiny posted waits say nothing
+  assert.equal(waitFactor([s(20, 10, 13 * 60), s(20, 10, 13 * 60)], now), 1); // yesterday's
+});
+
+test('ratings steer repeats: 😍 makes a done ride come back sooner, 😬 keeps it away', async () => {
+  const { plans, DEFAULT_PEOPLE } = await import('../public/logic.js');
+  const { ATTRACTIONS } = await import('../public/data.js');
+  const live = { rides: Object.fromEntries(ATTRACTIONS.map((a) => [a.id, { s: 'OPERATING', w: 10 }])) };
+  const base = { people: DEFAULT_PEOPLE, favs: [], live, walk: () => 200, month: 10 };
+  const top = (ctx) => plans(ctx)[0].parts[0].id;
+  const first = top({ ...base, done: {} });
+  const love = Object.fromEntries(DEFAULT_PEOPLE.map((p) => [p.id, 3]));
+  const hate = Object.fromEntries(DEFAULT_PEOPLE.map((p) => [p.id, 1]));
+  const score = (rates) => plans({ ...base, done: { [first]: 1 }, rates: { [first]: rates } }).find((p) => p.parts.some((x) => x.id === first))?.score ?? 0;
+  assert.ok(score(love) > score({}), 'loved ride scores higher than unrated');
+  assert.ok(score(hate) < score({}), 'disliked ride scores lower');
+});

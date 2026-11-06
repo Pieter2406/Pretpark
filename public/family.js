@@ -71,6 +71,18 @@ export function sanitizePlan(plan, people) {
   return out;
 }
 
+const okPerson = (f, id) => typeof id === 'string' && (f.people || []).some((p) => p.id === id);
+const partOf = (act, target) => (act.part === 1 && target.plan?.parts?.length === 2 ? 1 : 0);
+// one measured wait: { id, w: posted wait when they joined, m: real minutes, t, win: who guessed best }
+function addWait(f, target, part, m, t) {
+  const q = target.q?.[part], id = target.plan?.parts?.[part]?.id;
+  if (!q || !okRide(id) || !(m >= 0.5 && m <= 240)) return;
+  m = Math.round(m * 10) / 10;
+  let win = null, best = Infinity;
+  for (const [pid, g] of Object.entries(q.g || {})) { const d = Math.abs(g - m); if (d < best) { best = d; win = pid; } }
+  f.waits = [...(f.waits || []), { id, w: q.w, m, t, ...(win ? { win } : {}) }].slice(-40);
+}
+
 export function apply(fam, act, now) {
   const aid = okAid(act?.aid) ? act.aid : null;
   const seen = Array.isArray(fam?.aids) ? fam.aids : [];
@@ -107,6 +119,14 @@ export function apply(fam, act, now) {
     }
     case 'done': {
       const ids = (Array.isArray(act.ids) ? act.ids : []).filter(okId).slice(0, 3);
+      // a queue nobody tapped "aan de beurt" for: estimate the wait as queue → done minus the ride and getting off
+      if (target && !beforeTarget()) {
+        for (const [part, q] of Object.entries(target.q || {})) {
+          if (q.b) continue;
+          const a = byId[target.plan?.parts?.[part]?.id];
+          addWait(f, target, part, (t - q.t) / 60e3 - (a?.ride || 3) - 2, t);
+        }
+      }
       for (const id of ids) f.done[id] = (f.done[id] || 0) + 1;
       f.log = [...f.log, { t, ids }].sort((a, b) => a.t - b.t).slice(-80);
       if (!beforeTarget()) f.target = null;
@@ -122,7 +142,46 @@ export function apply(fam, act, now) {
       break;
     }
     case 'untarget': if (!beforeTarget()) f.target = null; break;
-    case 'queue': if (target && !beforeTarget()) target.queued = t; break;
+    // "we're in the queue": per part of the plan (a split has two queues), with the posted wait at that moment
+    case 'queue': {
+      if (!target || beforeTarget()) break;
+      const part = partOf(act, target);
+      target.queued = target.queued || t;
+      target.q = { ...(target.q || {}), [part]: { t, w: num(act.wait, 0, 300, null), g: target.q?.[part]?.g || {} } };
+      break;
+    }
+    // "it's our turn": the real wait is known now (for the guessing game and the planner's wait factor)
+    case 'board': {
+      if (!target || beforeTarget()) break;
+      const part = partOf(act, target), q = target.q?.[part];
+      if (!q || q.b || t < q.t) break;
+      q.b = t;
+      addWait(f, target, part, (t - q.t) / 60e3, t);
+      break;
+    }
+    case 'guess': {
+      if (!target || beforeTarget()) break;
+      const part = partOf(act, target), q = target.q?.[part];
+      if (!q || q.b || !okPerson(f, act.person)) break;
+      q.g = { ...(q.g || {}), [act.person]: Math.round(num(act.min, 1, 240, 10)) };
+      break;
+    }
+    case 'quiz': {
+      if (!okPerson(f, act.person) || typeof act.q !== 'string' || !/^[\w-]{1,40}$/.test(act.q)) throw new Error('bad quiz');
+      const qz = { ...(f.quiz || {}) };
+      const me = qz[act.person] || { pts: 0, n: 0, ids: [] };
+      if (me.ids.includes(act.q)) break; // a question counts once
+      qz[act.person] = { pts: me.pts + (act.ok === true ? 1 : 0), n: me.n + 1, ids: [...me.ids, act.q].slice(-150) };
+      f.quiz = qz;
+      break;
+    }
+    // how was it? 3 😍, 2 🙂, 1 😬 per person (the planner uses it for repeats)
+    case 'rate': {
+      if (!okRide(act.id) || !okPerson(f, act.person)) throw new Error('bad rate');
+      const v = Math.round(num(act.v, 1, 3, 2));
+      f.rates = { ...(f.rates || {}), [act.id]: { ...(f.rates?.[act.id] || {}), [act.person]: v } };
+      break;
+    }
     case 'ready':
       if (act.part !== 0 && act.part !== 1) throw new Error('bad part');
       if (act.device != null && !okDevice(act.device)) throw new Error('bad device');

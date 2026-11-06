@@ -64,3 +64,13 @@ test('cron: park open by schedule window, or (schedule unknown) by a running rid
   assert.equal(parkOpen(null, NOW), false);
   assert.equal(parkOpen({ open: null }, NOW), false);
 });
+
+test('"Nu ideaal": not while the family stands in a queue', () => {
+  const live = { ...allOpen(5), localTime: LOCAL, open: NOW - 2 * 3600e3 };
+  const plan = { type: 'together', key: k, score: 1, minutes: 10, parts: [{ group: ['p1'], id: k, ride: ['p1'], watch: [], escorted: [], walkM: 100, wait: 5, waitKnown: true, minutes: 10 }] };
+  const prefs = { best: true, fav: false, food: false, pause: false, rest: false, close: false };
+  const fam = famAt(NOW - 5 * 3600e3, { ate: NOW - 10 * 60e3, pause: NOW - 10 * 60e3, target: { plan, setAt: NOW - 50 * 60e3 } });
+  assert.ok(decide(fam, live, prefs).notes.some((n) => n.tag === 'best'), 'old target, not queued: suggest');
+  const queued = { ...fam, target: { ...fam.target, q: { 0: { t: NOW - 40 * 60e3, w: 45, g: {} } } } };
+  assert.ok(!decide(queued, live, prefs).notes.some((n) => n.tag === 'best'), 'in the queue: quiet');
+});

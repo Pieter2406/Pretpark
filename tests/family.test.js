@@ -204,3 +204,60 @@ test('phone numbers: cleaned, validated, optional', async () => {
   assert.ok(!('phone' in f.people[2]));
   assert.ok(!('phone' in f.people[0]));
 });
+
+test('queue per part, guesses, "aan de beurt" records the real wait and the best guess', () => {
+  let f = withTarget(split);
+  f = apply(f, { type: 'queue', part: 1, wait: 20 }, NOW);
+  assert.equal(f.target.queued, NOW);
+  assert.deepEqual(f.target.q[1], { t: NOW, w: 20, g: {} });
+  assert.equal(f.target.q[0], undefined);
+  f = apply(f, { type: 'guess', part: 1, person: 'p2', min: 12 }, NOW + 60e3);
+  f = apply(f, { type: 'guess', part: 1, person: 'p4', min: 25 }, NOW + 60e3);
+  f = apply(f, { type: 'guess', part: 1, person: 'nobody', min: 5 }, NOW + 60e3); // unknown person: ignored
+  f = apply(f, { type: 'guess', part: 1, person: 'p2', min: 999 }, NOW + 60e3); // clamped
+  assert.deepEqual(f.target.q[1].g, { p2: 240, p4: 25 });
+  f = apply(f, { type: 'guess', part: 1, person: 'p2', min: 14 }, NOW + 60e3);
+  f = apply(f, { type: 'board', part: 1 }, NOW + 15 * 60e3);
+  assert.equal(f.target.q[1].b, NOW + 15 * 60e3);
+  assert.deepEqual(f.waits, [{ id: split.parts[1].id, w: 20, m: 15, t: NOW + 15 * 60e3, win: 'p2' }]);
+  // boarding twice or guessing afterwards changes nothing
+  const again = apply(f, { type: 'board', part: 1 }, NOW + 20 * 60e3);
+  assert.equal(again.waits.length, 1);
+  assert.deepEqual(apply(f, { type: 'guess', part: 1, person: 'p4', min: 15 }, NOW + 16 * 60e3).target.q[1].g, { p2: 14, p4: 25 });
+  // done doesn't add a second sample for a boarded queue
+  f = apply(f, { type: 'done', ids: [split.parts[0].id, split.parts[1].id] }, NOW + 20 * 60e3);
+  assert.equal(f.waits.length, 1);
+  assert.equal(f.target, null);
+});
+
+test('done without "aan de beurt" estimates the wait (queue → done minus ride and getting off)', () => {
+  let f = withTarget(together);
+  const a = ATTRACTIONS.find((x) => x.id === together.parts[0].id);
+  f = apply(f, { type: 'queue', wait: 30 }, NOW);
+  f = apply(f, { type: 'done', ids: [a.id] }, NOW + (25 + a.ride + 2) * 60e3);
+  assert.equal(f.waits.length, 1);
+  assert.equal(f.waits[0].m, 25);
+  assert.equal(f.waits[0].w, 30);
+  // a queue part on a rest half or an unknown part index falls back to part 0
+  let g = withTarget(restPlan);
+  g = apply(g, { type: 'queue', part: 7 }, NOW);
+  assert.ok(g.target.q[0]);
+});
+
+test('quiz: points per person, a question counts once; rate: 1–3 per person per ride', () => {
+  let f = newFamily(NOW);
+  f = apply(f, { type: 'quiz', person: 'p3', q: 'kondaa-0', ok: true }, NOW);
+  f = apply(f, { type: 'quiz', person: 'p3', q: 'kondaa-0', ok: true }, NOW);
+  f = apply(f, { type: 'quiz', person: 'p3', q: 'pulsar-1', ok: false }, NOW);
+  assert.deepEqual(f.quiz.p3, { pts: 1, n: 2, ids: ['kondaa-0', 'pulsar-1'] });
+  assert.throws(() => apply(f, { type: 'quiz', person: 'p9', q: 'x', ok: true }, NOW), /bad quiz/);
+  assert.throws(() => apply(f, { type: 'quiz', person: 'p3', q: '<script>', ok: true }, NOW), /bad quiz/);
+  const k = find('Kondaa').id;
+  f = apply(f, { type: 'rate', id: k, person: 'p1', v: 3 }, NOW);
+  f = apply(f, { type: 'rate', id: k, person: 'p3', v: 9 }, NOW);
+  assert.deepEqual(f.rates[k], { p1: 3, p3: 3 });
+  f = apply(f, { type: 'rate', id: k, person: 'p1', v: 1 }, NOW);
+  assert.equal(f.rates[k].p1, 1);
+  assert.throws(() => apply(f, { type: 'rate', id: 'nope', person: 'p1', v: 2 }, NOW), /bad rate/);
+  assert.throws(() => apply(f, { type: 'rate', id: k, person: 'p8', v: 2 }, NOW), /bad rate/);
+});

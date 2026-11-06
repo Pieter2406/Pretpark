@@ -425,3 +425,60 @@ html { transition: background-color .4s; }
 .pcard.wide { grid-template-columns: auto minmax(0, 1fr); }
 .pcard.wide .btn { grid-column: 1 / -1; justify-content: center; }
 @media (max-width: 380px) { .pcard { grid-template-columns: auto minmax(0, 1fr); } .pcard .btn, .pcard button { grid-column: 1 / -1; justify-content: center; } }
+
+/* ---------- in the queue (rij-modus) */
+.qcard { background: var(--surface); border-radius: 22px; padding: 16px; box-shadow: var(--shadow); border: 2px solid var(--sun); margin: 8px 0 14px; }
+.qcard.on { border-color: var(--ok); }
+.qcard .kicker { margin: 0 0 8px; }
+.qcard h2 { margin: 0 0 6px; }
+.qtop { display: flex; align-items: center; gap: 14px; }
+.qph { width: 76px; height: 76px; border-radius: 16px; object-fit: cover; flex: none; }
+.qph.ic { display: grid; place-items: center; background: var(--surface-2); font-size: 2.4rem; }
+.qtime { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.qtime b { font-family: var(--display); font-size: 3.4rem; line-height: 1; font-weight: 700; color: var(--ink); }
+.qtime span { font-size: 1.1rem; color: var(--muted); font-weight: 600; }
+.qbar { height: 12px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin: 12px 0 6px; }
+.qbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--sun), var(--accent)); border-radius: inherit; transition: width .6s ease; }
+.qcard .primary.big { width: 100%; margin: 10px 0 12px; }
+.qgames { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.qgames button { display: grid; justify-items: start; gap: 2px; text-align: left; padding: 12px; min-height: 92px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--line); }
+.qgames button span { font-size: 1.6rem; line-height: 1; }
+.qgames button b { font-size: 1rem; }
+.qgames button i { font-style: normal; font-size: .82rem; color: var(--muted); line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.qnext { margin: 12px 2px 4px; }
+.qcard .meet { margin: 10px 0 6px; }
+.qcard .row2 { margin-top: 10px; }
+.quest { font-family: var(--display); font-size: 1.5rem; font-weight: 600; line-height: 1.25; margin: 6px 0 10px; }
+.facts { background: var(--mid-bg); border-radius: 16px; padding: 12px 14px; }
+.facts h3 { margin: 0 0 6px; font-size: 1rem; }
+.facts ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.quizwho, .faces { display: flex; flex-wrap: wrap; gap: 8px; }
+.quizwho button { min-height: 44px; padding: 6px 12px; border-radius: 999px; }
+.quizwho button b { margin-left: 4px; background: var(--sun); color: var(--sun-ink); border-radius: 999px; padding: 0 8px; }
+.quizwho button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.quiz h3 { font-size: 1.2rem; margin: 2px 0 10px; }
+.quiz > .small { margin: 14px 0 0; }
+.qopts { display: grid; gap: 8px; }
+.qopts button { min-height: 52px; text-align: left; justify-content: flex-start; font-size: 1.05rem; }
+.qopts button:disabled { opacity: 1; }
+.qopts button.right { background: var(--ok-bg); border-color: var(--ok); color: var(--ink); font-weight: 700; }
+.qopts button.wrong { background: var(--bad-bg); border-color: var(--bad); color: var(--ink); }
+.why { margin: 10px 0; }
+.guesses { display: grid; gap: 10px; margin: 10px 0; }
+.guess { display: grid; gap: 6px; background: var(--surface-2); border-radius: 16px; padding: 10px 12px; }
+.gname { font-weight: 700; }
+.gctl { display: grid; grid-template-columns: 1fr 1fr 1.3fr 1fr 1fr; gap: 6px; align-items: center; }
+.gctl button { min-height: 44px; padding: 0; display: grid; place-items: center; }
+.gctl b { font-family: var(--display); font-size: 1.8rem; text-align: center; }
+.rates { display: grid; gap: 8px; margin: 8px 0 10px; }
+.rate { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--surface-2); border-radius: 16px; padding: 8px 10px 8px 14px; }
+.rate > span:first-child { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.faces { flex-wrap: nowrap; gap: 6px; }
+.faces button { display: grid; place-items: center; width: 48px; height: 48px; min-height: 48px; padding: 0; justify-content: center; font-size: 1.6rem; border-radius: 14px; }
+.faces button[aria-pressed="true"] { background: var(--sun); border-color: var(--sun); transform: scale(1.08); }
+.st-fun { max-width: 640px; margin: 12px auto; background: var(--surface); border-radius: 18px; padding: 12px 16px; }
+.st-fun h3 { margin: 0 0 6px; }
+.st-fun ol { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+.st-fun li span { float: right; }
+.st-fun p { margin: 4px 0; }
+.st-line .cap { font-size: .8rem; font-weight: 600; line-height: 1.2; }
