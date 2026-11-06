@@ -126,6 +126,14 @@ No accounts; knowing the family id is the access.
 - Chat sizes itself to `visualViewport` (iOS keyboard); inputs are ≥16 px (no iOS zoom); `touch-action: manipulation`,
   no tap highlight, :active feedback; tap targets ≥ 44 px.
 
+## Theme (light by day, dark after sunset)
+- `sunTimes` / `isDaylight` in logic.js (standard sunrise equation for the park, ±2–5 min; tested against known times).
+- `S.theme`: 'sun' (default: light between sunrise and sunset at Walibi, whatever the phone's own setting), 'light',
+  'dark', 'system'. `applyTheme` sets `html[data-theme]`, color-scheme and the status-bar `theme-color`, and sets a
+  timer for the exact next sunrise/sunset. All dark CSS must be written for both `@media (prefers-color-scheme: dark)
+  :root:not([data-theme="light"])` and `:root[data-theme="dark"]`. An inline script in index.html applies the last
+  theme before first paint (localStorage `pp:lastTheme`). The Halloween "donker" hints use the same sunset.
+
 ## Non-obvious decisions
 - Wait times only exist for rides ThemeParks.wiki reports; a ride missing from live data is treated as closed.
 - Score = family enjoyment (per person/category, watchers cost, wet rides penalised Oct–Mar, favourites ×2, done ×0.35ⁿ)

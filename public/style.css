@@ -76,7 +76,8 @@ main { max-width: 720px; margin: 0 auto; padding: 4px var(--gutter) calc(96px + 
 .banner { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 14px; background: var(--surface-2); font-size: .9rem; }
 .banner b { font-weight: 700; }
 .banner.night { background: var(--plum); color: #fff; }
-@media (prefers-color-scheme: dark) { .banner.night { background: #3d2361; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .banner.night { background: #3d2361; } }
+:root[data-theme="dark"] .banner.night { background: #3d2361; }
 .banner .x { margin-left: auto; min-height: 32px; padding: 2px 10px; background: transparent; border: 0; color: inherit; }
 
 /* ---------- the ticket */
@@ -410,3 +411,7 @@ input, select, textarea { font-size: max(16px, 1em); } /* <16px makes iOS zoom i
 img { -webkit-user-drag: none; }
 .mapview svg { -webkit-user-select: none; user-select: none; }
 .banner .x { min-height: 44px; min-width: 44px; display: grid; place-items: center; }
+.themeseg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.themeseg button { min-height: 48px; }
+.themeseg button[aria-checked="true"] { background: var(--sun); color: var(--sun-ink); border-color: var(--sun); font-weight: 700; }
+html { transition: background-color .4s; }

@@ -1,7 +1,7 @@
 // Pretpark: the screens. State lives in S; changes call render(). The shared family state lives on the server
 // (family.js actions, versioned by `updated`); wait times come from /api/live; walking routes from route.js.
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
-import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON } from './logic.js';
+import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight } from './logic.js';
 import { makePark, pathLength, bearingXY } from './route.js';
 import { apply, phoneOf } from './family.js';
 import { idb } from './idb.js';
@@ -25,7 +25,9 @@ const S = {
   tickets: [], ticketBusy: '', auth: false, liveStale: false, outbox: [], offline: false,
   album: store.get('c:album', null)?.v || [], uploads: [], upMsg: '', albumOff: false,
   tab: 'now', mapMode: 'map', guide: null, filter: 'us', placing: false, dismissed: store.get('dismissed', {}),
-  history: store.get('history', []), voice: store.get('voice', false), autoNight: store.get('autoNight', true),
+  history: store.get('history', []), voice: store.get('voice', false),
+  // 'sun' = light while the sun is up at Walibi, dark from sunset; also 'light', 'dark', 'system' (follow the phone)
+  theme: store.get('theme', store.get('autoNight', true) === false ? 'system' : 'sun'),
   newVersion: false,
   chat: store.get('c:chat', null)?.v || [], chatQ: store.get('chatq', []), chatRead: store.get('chatRead', 0), chatOpen: false,
 };
@@ -647,7 +649,9 @@ function renderFam() {
       <p class="small muted" style="margin-top:6px">In de simulatie: ±8 km per dag normaal, ±6 km met “liever weinig”, voor ±5% minder ritjes-plezier.</p></div>
     <div class="card" id="pushCard"><h2>🔔 Meldingen</h2><div id="pushBody"><p class="muted small">…</p></div></div>
     <div class="card"><h2>🎛️ Weergave</h2>
-      <label class="tog"><input type="checkbox" data-setting="autoNight" ${S.autoNight ? 'checked' : ''}> 🌙 Donkere modus na zonsondergang</label>
+      <p class="small muted" style="margin:0 0 6px">Kleuren van de app</p>
+      <div class="seg themeseg" role="radiogroup" aria-label="Kleuren">${[['sun', '🌅 Automatisch (zon)'], ['light', '☀️ Licht'], ['dark', '🌙 Donker'], ['system', '📱 Zoals mijn gsm']].map(([k, t]) => `<button role="radio" data-themepick="${k}" aria-checked="${S.theme === k}" aria-pressed="${S.theme === k}">${t}</button>`).join('')}</div>
+      <p class="small muted" style="margin:6px 0 10px">${S.theme === 'sun' ? (() => { const st = sunTimes(new Date()); return `Vandaag licht van ${hhmm(st.rise)} tot zonsondergang om ${hhmm(st.set)}, daarna donker.`; })() : S.theme === 'system' ? 'Volgt de licht/donker-instelling van je gsm.' : ''}</p>
       <label class="tog"><input type="checkbox" data-setting="voice" ${S.voice ? 'checked' : ''}> 🔊 Gesproken aanwijzingen in de wandelgids</label></div>
     <div class="card"><h2>👨‍👩‍👧‍👦 Ons gezin</h2>
       <form id="peopleForm">${ps.map((p) => `
@@ -1397,7 +1401,7 @@ function onboard(step = S.fam ? 'who' : 'start') {
 function closeOnboard() { $('#onboard').hidden = true; closeDialog($('#onboard')); store.set('onboarded', true); }
 
 // ---------- banners (only what needs attention; the weather & opening hours sit in the status line)
-const isDark = () => { const d = new Date(); const h = d.getHours() + d.getMinutes() / 60; const m = d.getMonth(); return (m >= 9 || m <= 1) ? h >= 17.2 || h < 7.5 : h >= 21; };
+const isDark = () => !isDaylight(new Date()); // real sunset/sunrise at Walibi
 function renderBanners() {
   const b = [];
   if (S.newVersion) b.push(['update', '✨', 'Er is een nieuwe versie. <button class="x" data-go="reload">Herladen</button>']);
@@ -1423,9 +1427,29 @@ function renderBanners() {
     pill.classList.toggle('stale', Date.now() - L.t > 5 * 60e3 || S.liveStale);
   } else pill.textContent = '—';
 }
+// Light while it's light outside, dark from sunset (or a fixed choice). Sets the colours, the phone's status bar
+// colour, and a timer for the exact next sunrise/sunset so the switch happens on time, not up to 30 s late.
+const phoneDark = matchMedia('(prefers-color-scheme: dark)');
+phoneDark.addEventListener?.('change', () => applyTheme());
+let themeTimer = null;
 function applyTheme() {
-  const night = S.autoNight && isDark();
-  if (night) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+  const now = new Date();
+  const dark = S.theme === 'dark' || (S.theme === 'system' && phoneDark.matches) || (S.theme === 'sun' && !isDaylight(now));
+  const root = document.documentElement;
+  const want = dark ? 'dark' : 'light';
+  if (root.dataset.theme !== want) {
+    root.dataset.theme = want;
+    root.style.colorScheme = want;
+    try { localStorage.setItem('pp:lastTheme', want); } catch { /* fine */ }
+    for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = dark ? '#171127' : '#fff6ec';
+    if (MAP.svg) drawPins(); // map labels use theme colours
+  }
+  clearTimeout(themeTimer);
+  if (S.theme === 'sun') {
+    const { rise, set } = sunTimes(now);
+    const next = [rise, set, sunTimes(new Date(now.getTime() + 864e5)).rise].find((t) => t > now);
+    if (next) themeTimer = setTimeout(applyTheme, Math.min(next - now + 1000, 6 * 3600e3));
+  }
 }
 
 function render() {
@@ -1469,6 +1493,7 @@ document.addEventListener('click', async (e) => {
     renderTickets();
     return;
   }
+  if (d.themepick) { S.theme = d.themepick; store.set('theme', S.theme); applyTheme(); renderFam(); return; }
   if (d.walk) { await act({ type: 'walk', pref: d.walk }); toast(d.walk === 'low' ? 'Ik hou de wandelingen kort 👟' : 'Normaal stappen'); return; }
   if (d.me) { await act({ type: 'me', device, person: d.me }); toast('Top! 👋'); return; }
   if (d.filter) { S.filter = d.filter; renderList(); return; }

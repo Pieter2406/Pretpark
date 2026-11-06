@@ -100,3 +100,19 @@ test('"short now, long later": morning queues get a bonus, peak-time queues a pe
   const c = parkClock({ localTime: '2026-11-07T10:30:00Z', minutesLeft: 690, t: 0 }, 0);
   assert.deepEqual(c, { now: 630, close: 1320 });
 });
+
+test('sunrise and sunset at Walibi (light theme by day, dark after sunset)', async () => {
+  const { sunTimes, isDaylight } = await import('../public/logic.js');
+  const hm = (d) => d.toLocaleTimeString('nl-BE', { timeZone: 'Europe/Brussels', hour: '2-digit', minute: '2-digit' });
+  const near = (d, hhmm, tol = 6) => { const [h, m] = hhmm.split(':').map(Number); const [a, b] = hm(d).split(':').map(Number); return Math.abs((a * 60 + b) - (h * 60 + m)) <= tol; };
+  const nov7 = sunTimes(new Date('2026-11-07T12:00:00+01:00'));
+  assert.ok(near(nov7.rise, '07:45', 8), 'sunrise 7 Nov ≈ 07:45, got ' + hm(nov7.rise));
+  assert.ok(near(nov7.set, '17:03', 8), 'sunset 7 Nov ≈ 17:03, got ' + hm(nov7.set));
+  const dec21 = sunTimes(new Date('2026-12-21T12:00:00+01:00'));
+  assert.ok(near(dec21.rise, '08:43') && near(dec21.set, '16:39'), 'winter solstice ≈ 08:43–16:39');
+  const jun21 = sunTimes(new Date('2026-06-21T12:00:00+02:00'));
+  assert.ok(near(jun21.set, '22:00'), 'sunset 21 Jun ≈ 22:00, got ' + hm(jun21.set));
+  assert.equal(isDaylight(new Date('2026-11-07T14:00:00+01:00')), true);
+  assert.equal(isDaylight(new Date('2026-11-07T17:30:00+01:00')), false);
+  assert.equal(isDaylight(new Date('2026-11-07T07:00:00+01:00')), false);
+});

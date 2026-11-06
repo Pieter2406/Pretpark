@@ -87,6 +87,30 @@ export function raining(live) {
 export const WX_ICON = (sym = '') => /thunder/.test(sym) ? '⛈️' : /snow|sleet/.test(sym) ? '🌨️' : /rain/.test(sym) ? '🌧️'
   : /fog/.test(sym) ? '🌫️' : /^cloudy/.test(sym) ? '☁️' : /partly|fair/.test(sym) ? '🌤️' : /clearsky_night/.test(sym) ? '🌙' : /clear/.test(sym) ? '☀️' : '🌡️';
 
+// ---------- sun: sunrise and sunset (standard sunrise equation, accurate to ~1–2 minutes), for the light/dark theme
+const RAD = Math.PI / 180;
+export const PARK_SPOT = { lat: 50.7, lon: 4.59 };
+export function sunTimes(when = new Date(), { lat, lon } = PARK_SPOT) {
+  // Julian day of local noon for this calendar date, then the solar transit, declination and hour angle
+  const noon = Date.UTC(when.getFullYear(), when.getMonth(), when.getDate(), 12);
+  const n = Math.round(noon / 864e5 + 2440587.5 - 2451545.0 + 0.0008);
+  const Jstar = n - lon / 360;
+  const M = (357.5291 + 0.98560028 * Jstar) % 360;
+  const C = 1.9148 * Math.sin(M * RAD) + 0.02 * Math.sin(2 * M * RAD) + 0.0003 * Math.sin(3 * M * RAD);
+  const L = (M + C + 180 + 102.9372) % 360;
+  const Jtransit = 2451545.0 + Jstar + 0.0053 * Math.sin(M * RAD) - 0.0069 * Math.sin(2 * L * RAD);
+  const sinD = Math.sin(L * RAD) * Math.sin(23.4397 * RAD);
+  const cosD = Math.cos(Math.asin(sinD));
+  const cosW = (Math.sin(-0.833 * RAD) - Math.sin(lat * RAD) * sinD) / (Math.cos(lat * RAD) * cosD);
+  const w = Math.acos(Math.max(-1, Math.min(1, cosW))) / RAD;
+  const toMs = (J) => (J - 2440587.5) * 864e5;
+  return { rise: new Date(toMs(Jtransit - w / 360)), set: new Date(toMs(Jtransit + w / 360)) };
+}
+export function isDaylight(when = new Date(), spot = PARK_SPOT) {
+  const { rise, set } = sunTimes(when, spot);
+  return when >= rise && when < set;
+}
+
 // ---------- the planner
 // Walking weight per minute, relative to a minute in the queue. Tuned with sim/simulate.mjs (40 simulated days):
 // 'normal' gave the most fun (−13% walking vs. weight 1); 'low' walks ~20% less again for ~5% less fun.
