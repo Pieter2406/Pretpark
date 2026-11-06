@@ -1098,7 +1098,7 @@ function questSheet() {
 function quizList() {
   return Object.entries(FACTS).flatMap(([name, f]) => (f.quiz || []).map((x, i) => ({ ...x, id: `${slug(name)}-${i}`, ride: name })));
 }
-function quizSheet(answered) {
+function quizSheet(answered, keepPlace = !!answered) {
   const Q = myQueue();
   const group = groupOf(Q);
   if (!group.some((p) => p.id === S.quizWho)) S.quizWho = (group.find((p) => p.kind === 'child' && p.height >= 110) || group.find((p) => p.kind === 'child') || group[0])?.id;
@@ -1127,6 +1127,8 @@ function quizSheet(answered) {
     <p class="small muted" style="margin:12px 0 6px">Wie speelt? Punten tellen de hele dag.</p>
     <div class="quizwho" role="group" aria-label="Wie speelt">${board}</div>${quiz}
     <button data-go="sheetclose" style="width:100%;margin-top:12px">Sluiten</button>`);
+  // after an answer, "next" or a new player: keep the question in view (the facts are above it)
+  if (keepPlace) { const s = $('#sheet'), w = s.querySelector('.quizwho'); if (w) s.scrollTop = Math.max(0, w.offsetTop - 60); }
 }
 function guessSheet() {
   const Q = myQueue(); if (!Q) return;
@@ -1712,7 +1714,7 @@ document.addEventListener('click', async (e) => {
   if (d.filter) { S.filter = d.filter; renderList(); return; }
   if (d.fav) { buzz(); await act({ type: 'fav', id: d.fav, on: !(S.fam.favs || []).includes(d.fav) }); if (!$('#sheet').hidden && $('#sheet').querySelector(`[data-goride="${d.fav}"]`)) rideSheet(d.fav); return; }
   if (d.undo) { await act({ type: 'undo', id: d.undo }); return; }
-  if (d.quizwho) { S.quizWho = d.quizwho; quizSheet(); return; }
+  if (d.quizwho) { S.quizWho = d.quizwho; quizSheet(null, true); return; }
   if (d.quizans != null && S.quizQ) {
     const q = S.quizQ, picked = +d.quizans, ok = picked === q.answer;
     S.quizSeen = S.quizSeen || {}; (S.quizSeen[S.quizWho] ||= []).push(q.id);
@@ -1775,7 +1777,7 @@ document.addEventListener('click', async (e) => {
     case 'quest': questSheet(); break;
     case 'questskip': S.questSkip = num(S.questSkip) + 1; questSheet(); if (S.tab === 'now') renderNow(); break;
     case 'quiz': quizSheet(); break;
-    case 'quiznext': quizSheet(); break;
+    case 'quiznext': quizSheet(null, true); break;
     case 'guess': guessSheet(); break;
     case 'ready': {
       const plan = S.fam.target?.plan; if (!plan) break;
