@@ -174,10 +174,17 @@ svg .lbl { font-family: var(--font); font-weight: 700; paint-order: stroke; stro
 /* ---------- sheet */
 .sheet-back { position: fixed; inset: 0; background: rgba(20, 10, 30, .45); z-index: 30; }
 .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 31; max-height: 86dvh; overflow: auto; background: var(--bg);
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch; transform: translateY(var(--dy, 0px)); transition: transform .22s cubic-bezier(.2,.8,.2,1);
   border-radius: 24px 24px 0 0; padding: 10px var(--gutter) calc(env(safe-area-inset-bottom) + 18px); box-shadow: var(--shadow); }
-.sheet::before { content: ""; display: block; width: 44px; height: 5px; border-radius: 3px; background: var(--line); margin: 0 auto 12px; }
+.sheet-grip { height: 26px; margin: -10px calc(-1 * var(--gutter)) 4px; display: grid; place-items: center; touch-action: none; cursor: grab; }
+.sheet-grip::before { content: ""; width: 48px; height: 5px; border-radius: 3px; background: var(--muted); opacity: .5; }
+.sheet-x { position: absolute; top: 10px; right: 12px; z-index: 2; width: 40px; height: 40px; min-height: 40px; padding: 0; border-radius: 50%; font-size: 1rem; background: var(--surface); box-shadow: var(--shadow); }
+.sheet.dragging { transition: none; }
+.sheet.in { animation: sheet-in .26s cubic-bezier(.2,.8,.2,1); }
+@keyframes sheet-in { from { transform: translateY(40%); opacity: .4; } }
+.sheet-back { transition: opacity .2s; touch-action: none; }
 .sheet h2 { font-size: 1.5rem; margin-bottom: 4px; }
-@media (min-width: 900px) { .sheet { left: 50%; width: 560px; transform: translateX(-50%); bottom: 20px; border-radius: 24px; } }
+@media (min-width: 900px) { .sheet { left: 50%; width: 560px; transform: translate(-50%, var(--dy, 0px)); bottom: 20px; border-radius: 24px; } .sheet.in { animation: none; } }
 
 /* ---------- family */
 .card { background: var(--surface); border-radius: var(--radius); padding: 16px; margin: 12px 0; box-shadow: var(--shadow); }
@@ -389,3 +396,17 @@ svg .pulse { animation: pulse 1.6s ease-out infinite; transform-box: fill-box; t
 .dot.no { opacity: .55; position: relative; }
 .dot.no::after { content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px; background: var(--bad); transform: rotate(-35deg); border-radius: 2px; }
 .dot { width: 24px; height: 24px; font-size: .78rem; }
+
+/* ---------- phone polish (v6) */
+html { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+body.locked { position: fixed; left: 0; right: 0; overflow: hidden; } /* page behind a dialog can't move */
+button, .filebtn, .tabs button, .alt, .chip, label.tog, .hdr-cam { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+button:active:not(:disabled), .filebtn:active, .hdr-cam:active { transform: scale(.97); transition: transform .06s; }
+.tabs button:active { transform: none; background: var(--surface-2); }
+input, select, textarea { font-size: max(16px, 1em); } /* <16px makes iOS zoom in on focus */
+.guide, .pview, .tview, .story, .chat, .onboard, .ch-list { overscroll-behavior: contain; }
+.chat { top: var(--vvt, 0px); bottom: auto; height: var(--vvh, 100dvh); }
+.toast { top: calc(env(safe-area-inset-top) + 64px); }
+img { -webkit-user-drag: none; }
+.mapview svg { -webkit-user-select: none; user-select: none; }
+.banner .x { min-height: 44px; min-width: 44px; display: grid; place-items: center; }

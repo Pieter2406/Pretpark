@@ -115,6 +115,17 @@ No accounts; knowing the family id is the access.
   prefetched once at start.
 - Photos appear on the plan card, alternatives, list, ride sheet and in the guide ("Zo ziet het eruit" within 250 m).
 
+## v6 phone polish
+- All dialogs (sheet, guide, ticket/photo viewers, story, chat, onboarding) go through openDialog/closeDialog in app.js:
+  the page behind is locked (body.locked, position: fixed, scroll position restored), each dialog gets a history entry
+  so the phone's back button closes it (popstate → `closers`), and focus is only moved on fine pointers (no iOS jump).
+  A dialog that is already open is never registered twice.
+- Bottom sheet: swipe down to close (follows the finger; closes on >30% / 140 px or a flick > 0.5 px/ms measured over
+  the last 100 ms; only when scrolled to the top), ✕ button, grip, slide-in animation; the backdrop swallows touches.
+- Ticket and photo viewers close with a swipe down; left/right still flips.
+- Chat sizes itself to `visualViewport` (iOS keyboard); inputs are ≥16 px (no iOS zoom); `touch-action: manipulation`,
+  no tap highlight, :active feedback; tap targets ≥ 44 px.
+
 ## Non-obvious decisions
 - Wait times only exist for rides ThemeParks.wiki reports; a ride missing from live data is treated as closed.
 - Score = family enjoyment (per person/category, watchers cost, wet rides penalised Oct–Mar, favourites ×2, done ×0.35ⁿ)

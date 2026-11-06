@@ -838,18 +838,51 @@ function guideHeading() {
   }
 }
 
-// ---------- dialogs: focus goes in, Tab stays in, focus returns on close
+// ---------- dialogs (sheet, guide, viewers, story, chat, onboarding)
+// - the page behind is locked, so a swipe never scrolls the screen underneath (iOS needs position: fixed for that)
+// - the phone's back button / gesture closes the top dialog instead of leaving the app (a history entry per dialog)
+// - keyboard users get focus moved in and kept in; on touch screens we don't move focus (it makes iOS jump)
 const dialogStack = [];
+const finePointer = matchMedia('(pointer: fine)').matches;
+let lockedY = 0, skipPops = 0;
+function lockPage(on) {
+  const b = document.body;
+  if (on && !b.classList.contains('locked')) {
+    lockedY = scrollY; b.style.top = `-${lockedY}px`; b.classList.add('locked');
+  } else if (!on && b.classList.contains('locked')) {
+    b.classList.remove('locked'); b.style.top = ''; scrollTo(0, lockedY);
+  }
+}
 function openDialog(el) {
+  if (dialogStack.some((d) => d.el === el)) return; // already open (e.g. the next onboarding step): no second entry
   dialogStack.push({ el, back: document.activeElement });
-  setTimeout(() => el.querySelector('button, [href], input, select, [tabindex="0"]')?.focus(), 30);
+  lockPage(true);
+  try { history.pushState({ pp: el.id }, ''); } catch { /* ignore */ }
+  if (finePointer) setTimeout(() => el.querySelector('button, [href], input, select, [tabindex="0"]')?.focus(), 30);
 }
 function closeDialog(el) {
   const i = dialogStack.findLastIndex((d) => d.el === el);
   if (i < 0) return;
   const [d] = dialogStack.splice(i, 1);
-  d.back?.focus?.();
+  if (!dialogStack.length) lockPage(false);
+  if (finePointer) d.back?.focus?.();
+  // closed with a button or a swipe: drop our history entry too, so "back" later doesn't do nothing
+  if (!d.noHistory && history.state?.pp === el.id) { skipPops++; history.back(); }
 }
+const closers = {
+  sheet: () => closeSheet(), guide: () => closeGuide(), tview: () => closeViewer(), pview: () => closePhoto(),
+  story: () => closeStory(), chat: () => closeChat(),
+};
+addEventListener('popstate', () => {
+  if (skipPops) { skipPops--; return; }
+  const top = dialogStack.at(-1);
+  if (!top) return;
+  if (top.el.id === 'onboard') { try { history.pushState({ pp: 'onboard' }, ''); } catch { /* ignore */ } return; } // can't back out of the welcome
+  // the entry is already gone (the user pressed back): close without calling history.back() again
+  top.noHistory = true;
+  closers[top.el.id]?.();
+});
+function closeStory() { $('#story').hidden = true; closeDialog($('#story')); }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Tab' || !dialogStack.length) return;
   const el = dialogStack.at(-1).el; if (el.hidden) return;
@@ -862,10 +895,51 @@ document.addEventListener('keydown', (e) => {
 // ---------- sheets
 function openSheet(html) {
   const s = $('#sheet'); const was = !s.hidden;
-  s.innerHTML = html; s.hidden = false; $('#sheetBack').hidden = false;
-  if (!was) openDialog(s);
+  s.innerHTML = `<div class="sheet-grip" aria-hidden="true"></div><button class="sheet-x" data-go="sheetclose" aria-label="Sluiten">✕</button>${html}`;
+  s.scrollTop = 0; s.style.setProperty('--dy', '0px');
+  s.hidden = false; $('#sheetBack').hidden = false;
+  if (!was) { openDialog(s); s.classList.remove('in'); void s.offsetWidth; s.classList.add('in'); }
 }
-function closeSheet() { if ($('#sheet').hidden) return; $('#sheet').hidden = true; $('#sheetBack').hidden = true; closeDialog($('#sheet')); }
+function closeSheet() {
+  const s = $('#sheet'); if (s.hidden) return;
+  s.hidden = true; $('#sheetBack').hidden = true; $('#sheetBack').style.opacity = '';
+  s.style.setProperty('--dy', '0px'); s.classList.remove('dragging');
+  closeDialog(s);
+}
+// swipe the sheet down to close it: it follows the finger; a long or quick swipe closes, a short one snaps back.
+// Only when the sheet is scrolled to the top, so scrolling inside a long sheet keeps working.
+(() => {
+  const s = $('#sheet'), back = $('#sheetBack');
+  let y0 = 0, dy = 0, drag = null, trail = []; // drag: null = undecided, true = dragging the sheet, false = scrolling inside
+  s.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) { drag = false; return; }
+    y0 = e.touches[0].clientY; dy = 0; trail = [];
+    drag = s.scrollTop <= 0 || !!e.target.closest('.sheet-grip') ? null : false;
+  }, { passive: true });
+  s.addEventListener('touchmove', (e) => {
+    if (drag === false) return;
+    const d = e.touches[0].clientY - y0;
+    if (drag === null) { if (Math.abs(d) < 6) return; drag = d > 0; if (!drag) return; s.classList.add('dragging'); }
+    e.preventDefault(); // we move the sheet; nothing scrolls
+    dy = Math.max(0, d);
+    const now = performance.now(); trail.push([now, dy]); while (trail.length > 2 && now - trail[0][0] > 100) trail.shift();
+    s.style.setProperty('--dy', dy + 'px');
+    back.style.opacity = String(Math.max(0.15, 1 - dy / 400));
+  }, { passive: false });
+  const end = () => {
+    if (!drag) { drag = null; return; }
+    drag = null; s.classList.remove('dragging');
+    // speed over the last ~100 ms of the movement (a flick), in px per ms
+    const v = trail.length > 1 ? (trail.at(-1)[1] - trail[0][1]) / Math.max(1, trail.at(-1)[0] - trail[0][0]) : 0;
+    if (dy > Math.min(140, s.offsetHeight * 0.3) || (v > 0.5 && dy > 30)) {
+      s.style.setProperty('--dy', s.offsetHeight + 'px'); back.style.opacity = '0';
+      setTimeout(closeSheet, 180);
+    } else { s.style.setProperty('--dy', '0px'); back.style.opacity = ''; }
+  };
+  s.addEventListener('touchend', end); s.addEventListener('touchcancel', end);
+  // the backdrop never lets a swipe through to the page
+  back.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+})();
 function foodSheet() {
   const meal = isMealTime(new Date());
   const opts = foodOptions(walkOf, { mealTime: meal }).slice(0, 6);
@@ -1231,6 +1305,12 @@ function openChat() {
   renderChat(); markRead(); loadChat(); flushChat();
   clearInterval(openChat.timer); openChat.timer = setInterval(() => { if (!document.hidden) loadChat(); }, 4000);
 }
+// iOS doesn't shrink the page for the keyboard: size the chat to the visible part of the screen
+const vv = window.visualViewport;
+if (vv) {
+  const fit = () => { const r = document.documentElement.style; r.setProperty('--vvh', vv.height + 'px'); r.setProperty('--vvt', vv.offsetTop + 'px'); };
+  vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
+}
 function closeChat() { S.chatOpen = false; clearInterval(openChat.timer); $('#chat').hidden = true; closeDialog($('#chat')); renderChatBadge(); }
 function renderChat() {
   const list = $('#chList'); if (!list) return;
@@ -1438,7 +1518,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'tvclose': closeViewer(); break;
     case 'story': openStory(); break;
-    case 'storyclose': $('#story').hidden = true; closeDialog($('#story')); break;
+    case 'storyclose': closeStory(); break;
     case 'pvclose': closePhoto(); break;
     case 'pvprev': pv.i = Math.max(0, pv.i - 1); drawPhoto(); break;
     case 'pvnext': pv.i = Math.min(albumItems().length - 1, pv.i + 1); drawPhoto(); break;
@@ -1506,7 +1586,7 @@ function celebrate() {
 }
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (!$('#chat').hidden) closeChat(); else if (!$('#pview').hidden) closePhoto(); else if (!$('#story').hidden) { $('#story').hidden = true; closeDialog($('#story')); }
+    if (!$('#chat').hidden) closeChat(); else if (!$('#pview').hidden) closePhoto(); else if (!$('#story').hidden) closeStory();
     else if (!$('#tview').hidden) closeViewer(); else if (!$('#sheet').hidden) closeSheet(); else if (S.guide) closeGuide();
   }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('g.pin')) {
@@ -1560,12 +1640,16 @@ document.addEventListener('submit', async (e) => {
     if (await act({ type: 'people', people: ps })) toast('Opgeslagen ✓');
   }
 });
-let swipeX = null, swipeIn = null;
-document.addEventListener('touchstart', (e) => { swipeIn = e.target.closest('#tview') ? 't' : e.target.closest('#pview') ? 'p' : null; swipeX = swipeIn ? e.touches[0].clientX : null; }, { passive: true });
+let swipeX = null, swipeY = null, swipeIn = null;
+document.addEventListener('touchstart', (e) => {
+  swipeIn = e.target.closest('#tview') ? 't' : e.target.closest('#pview') ? 'p' : null;
+  swipeX = swipeIn ? e.touches[0].clientX : null; swipeY = swipeIn ? e.touches[0].clientY : null;
+}, { passive: true });
 document.addEventListener('touchend', (e) => {
   if (swipeX == null) return;
-  const dx = e.changedTouches[0].clientX - swipeX; swipeX = null;
-  if (Math.abs(dx) < 60) return;
+  const dx = e.changedTouches[0].clientX - swipeX, dy = e.changedTouches[0].clientY - swipeY; swipeX = null;
+  if (dy > 110 && Math.abs(dy) > Math.abs(dx) * 1.5) { if (swipeIn === 't') closeViewer(); else closePhoto(); return; } // swipe down closes
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
   if (swipeIn === 't') { tv.i = Math.max(0, Math.min(shownTickets().length - 1, tv.i + (dx < 0 ? 1 : -1))); tv.page = false; drawViewer(); }
   if (swipeIn === 'p') { pv.i = Math.max(0, Math.min(albumItems().length - 1, pv.i + (dx < 0 ? 1 : -1))); drawPhoto(); }
 });
