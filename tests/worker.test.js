@@ -403,3 +403,26 @@ test('otsetup ?all=1: every phone of the family, never the token', async () => {
   assert.deepEqual(r.data.links.map((l) => l.device).sort(), ['devotall0001', 'devotall0002']);
   assert.ok(!JSON.stringify(r.data).match(/"token"/));
 });
+
+test('photos: small version first (in the album at once), the original later; star/caption kept; thumb served meanwhile', async () => {
+  const f = await newFam();
+  const thumb = new File([Buffer.from('thumbjpeg')], 'thumb.jpg', { type: 'image/jpeg' });
+  const fd1 = new FormData(); fd1.append('thumb', thumb); fd1.append('meta', JSON.stringify({ t: Date.now() - 60e3, thumbOnly: true, size: 7716853, near: 'Cobra' }));
+  const r1 = await call('POST', `/api/photos/${f.id}/twostep0001`, fd1);
+  assert.equal(r1.status, 201); assert.equal(r1.data.full, false); assert.equal(r1.data.size, 7716853);
+  const list1 = (await call('GET', `/api/photos/${f.id}`)).data;
+  assert.equal(list1.length, 1); assert.equal(list1[0].full, false);
+  // the "full" URL serves the small version until the original is there
+  const g = await worker.fetch(new Request(`http://localhost/api/photos/${f.id}/twostep0001/full`), env, ctx);
+  assert.equal(g.status, 200); assert.equal(await g.text(), 'thumbjpeg');
+  await call('PATCH', `/api/photos/${f.id}/twostep0001`, { star: true, caption: 'Wauw' });
+  const fd2 = new FormData(); fd2.append('full', new File([Buffer.from('fulljpeg')], 'x.jpg', { type: 'image/jpeg' })); fd2.append('thumb', thumb); fd2.append('meta', JSON.stringify({ t: Date.now() - 60e3 }));
+  const r2 = await call('POST', `/api/photos/${f.id}/twostep0001`, fd2);
+  assert.equal(r2.status, 201); assert.notEqual(r2.data.full, false); assert.equal(r2.data.star, true); assert.equal(r2.data.caption, 'Wauw');
+  const g2 = await worker.fetch(new Request(`http://localhost/api/photos/${f.id}/twostep0001/full`), env, ctx);
+  assert.equal(await g2.text(), 'fulljpeg');
+  // a late small-version retry never downgrades the original
+  const r3 = await call('POST', `/api/photos/${f.id}/twostep0001`, fd1);
+  assert.equal(r3.status, 200);
+  assert.notEqual((await call('GET', `/api/photos/${f.id}`)).data[0].full, false);
+});

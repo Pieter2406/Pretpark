@@ -420,7 +420,8 @@ async function photos(request, env, email, fam, id, what) {
     return json(results.map((r) => ({ id: r.id, t: r.t, ...JSON.parse(r.meta) })));
   }
   if (request.method === 'GET') {
-    const obj = await env.PHOTOS.get(`${fam}/${id}${what === 'thumb' ? '.t' : ''}`);
+    // the original may still be on its way (the phone sent the small version first): show the small one meanwhile
+    const obj = (await env.PHOTOS.get(`${fam}/${id}${what === 'thumb' ? '.t' : ''}`)) || (what !== 'thumb' ? await env.PHOTOS.get(`${fam}/${id}.t`) : null);
     if (!obj) throw fail(404, 'no photo');
     const h = new Headers();
     obj.writeHttpMetadata(h);
@@ -448,13 +449,29 @@ async function photos(request, env, email, fam, id, what) {
     return json({ ok: true, meta });
   }
   if (request.method !== 'POST' || !id) throw fail(405, 'method not allowed');
-  // multipart: full (original file), thumb (jpeg), meta (json)
+  // multipart: full (original file), thumb (jpeg), meta (json). With meta.thumbOnly the phone sends the small version
+  // first (seconds, even on a weak signal), so the photo is in the shared album at once; the original follows later.
   const len = Number(request.headers.get('content-length') || 0);
   if (len > MAX_PHOTO + 2e6) throw fail(413, 'photo too big');
   // The client drops a queued upload only on 'bad photo' (400) or 'photo too big' (413): anything else is retried.
   const form = await request.formData();
   const full = form.get('full'), thumb = form.get('thumb');
   let m = {}; try { m = JSON.parse(form.get('meta') || '{}'); } catch { /* defaults */ }
+  const prev = await env.DB.prepare('SELECT family, meta FROM photos WHERE id = ?').bind(id).first();
+  if (prev && prev.family !== fam) throw fail(409, 'id taken'); // never replace another family's photo
+  if (m.thumbOnly === true && !(full instanceof File)) {
+    if (!(thumb instanceof File) || thumb.size === 0 || thumb.size >= 2e6) throw fail(400, 'bad photo');
+    const old = prev ? JSON.parse(prev.meta) : null;
+    if (old && old.full !== false) return json({ ok: true, id, t: (await env.DB.prepare('SELECT t FROM photos WHERE id = ?').bind(id).first())?.t, ...old }, 200); // original already here
+    await env.PHOTOS.put(`${fam}/${id}.t`, thumb.stream(), { httpMetadata: { contentType: 'image/jpeg' } });
+    const t0 = Number.isFinite(+m.t) && +m.t > 1.6e12 && +m.t < Date.now() + 864e5 ? +m.t : Date.now();
+    const meta0 = { by: email, size: Math.max(0, Math.round(+m.size) || 0), type: 'image/jpeg', full: false,
+      w: Math.round(+m.w) || null, h: Math.round(+m.h) || null,
+      lat: Number.isFinite(+m.lat) && m.lat !== null ? +m.lat : null, lon: Number.isFinite(+m.lon) && m.lon !== null ? +m.lon : null,
+      near: String(m.near ?? '').slice(0, 60), caption: String(old?.caption || m.caption || '').slice(0, 200), star: !!old?.star };
+    await env.DB.prepare('INSERT OR REPLACE INTO photos (id, family, meta, t, created) VALUES (?, ?, ?, ?, ?)').bind(id, fam, JSON.stringify(meta0), t0, Date.now()).run();
+    return json({ ok: true, id, t: t0, ...meta0 }, 201);
+  }
   if (!(full instanceof File) || full.size === 0 || full.size > MAX_PHOTO) throw fail(400, 'bad photo');
   // not an image (or an SVG, which could run script on this origin): refused. No type (multipart sends a typeless
   // file as application/octet-stream) or an unusual image type: stored as image/jpeg like before (browsers sniff
@@ -462,8 +479,6 @@ async function photos(request, env, email, fam, id, what) {
   const ft = full.type.toLowerCase();
   if (ft && ft !== 'application/octet-stream' && (!ft.startsWith('image/') || /svg|xml/.test(ft))) throw fail(400, 'bad photo');
   const type = IMG_TYPES.includes(ft) ? ft : 'image/jpeg';
-  const prev = await env.DB.prepare('SELECT family, meta FROM photos WHERE id = ?').bind(id).first();
-  if (prev && prev.family !== fam) throw fail(409, 'id taken'); // never replace another family's photo
   const t = Number.isFinite(+m.t) && +m.t > 1.6e12 && +m.t < Date.now() + 864e5 ? +m.t : Date.now();
   const stamp = brusselsLocal(t).slice(0, 16).replace(/[-:]/g, '').replace('T', '-'); // 20261107-1432
   await env.PHOTOS.put(`${fam}/${id}`, full.stream(), { httpMetadata: { contentType: type }, customMetadata: { stamp, by: email } });

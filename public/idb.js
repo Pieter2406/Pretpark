@@ -1,14 +1,15 @@
-// Tiny IndexedDB wrapper: tickets, lost-child photos and the album's upload queue live on the device,
+// Tiny IndexedDB wrapper: tickets, lost-child photos, the album's upload queue and `keep` (every album photo taken or
+// added on this phone, original + thumbnail, kept after upload so nothing is ever lost) live on the device,
 // so they work without signal. iOS can close the connection while the app is in the background, and a full disk
 // aborts a transaction: both are retried once on a fresh connection. all() returns null (not []) on failure, so
 // callers can keep what they already show instead of "losing" the tickets.
 let dbp = null;
 function db() {
   dbp ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open('pretpark', 2);
+    const req = indexedDB.open('pretpark', 3);
     req.onupgradeneeded = () => {
       const d = req.result;
-      for (const name of ['tickets', 'photos', 'uploads']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name, { keyPath: 'id' });
+      for (const name of ['tickets', 'photos', 'uploads', 'keep']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name, { keyPath: 'id' });
     };
     req.onsuccess = () => { const d = req.result; d.onclose = () => { dbp = null; }; d.onversionchange = () => { d.close(); dbp = null; }; resolve(d); };
     req.onerror = () => { dbp = null; reject(req.error); };
@@ -32,6 +33,7 @@ async function run(store, mode, fn) {
 }
 export const idb = {
   all: (store) => run(store, 'readonly', (s) => s.getAll()).catch(() => null),
+  get: (store, id) => run(store, 'readonly', (s) => s.get(id)).catch(() => null),
   put: (store, v) => run(store, 'readwrite', (s) => s.put(v)).then(() => true, () => false),
   del: (store, id) => run(store, 'readwrite', (s) => s.delete(id)).then(() => true, () => false),
 };
