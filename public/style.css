@@ -39,7 +39,7 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 var(--font);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
-  min-height: 100dvh;
+  min-height: 100vh; min-height: 100dvh;
 }
 button, input, select { font: inherit; color: inherit; }
 button { min-height: 44px; padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; touch-action: manipulation; }
@@ -54,7 +54,7 @@ h1, h2, h3 { font-family: var(--display); font-weight: 600; margin: 0; line-heig
 
 /* ---------- header, tabs */
 .top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px var(--gutter); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); }
+  padding: 10px var(--gutter); background: var(--bg); background: color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 .brand { display: flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 700; font-size: 1.3rem; }
 .brand img { border-radius: 8px; }
 .live { font-size: .8rem; color: var(--muted); display: flex; align-items: center; gap: 6px; text-align: right; }
@@ -147,7 +147,7 @@ main { max-width: 720px; margin: 0 auto; padding: 4px var(--gutter) calc(96px + 
 /* ---------- map */
 .mapwrap { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--map-ground); box-shadow: var(--shadow); touch-action: none; }
 .mapwrap svg { display: block; width: 100%; height: 100%; }
-.mapview { height: calc(100dvh - 300px); min-height: 340px; }
+.mapview { height: calc(100vh - 300px); height: calc(100dvh - 300px); min-height: 340px; }
 .map-tools { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
 .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: .8rem; color: var(--muted); margin-top: 8px; }
 svg .pin text { font-family: var(--display); font-weight: 700; }
@@ -174,7 +174,7 @@ svg .lbl { font-family: var(--font); font-weight: 700; paint-order: stroke; stro
 
 /* ---------- sheet */
 .sheet-back { position: fixed; inset: 0; background: rgba(20, 10, 30, .45); z-index: 30; }
-.sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 31; max-height: 86dvh; overflow: auto; background: var(--bg);
+.sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 31; max-height: 86vh; max-height: 86dvh; overflow: auto; background: var(--bg);
   overscroll-behavior: contain; -webkit-overflow-scrolling: touch; transform: translateY(var(--dy, 0px)); transition: transform .22s cubic-bezier(.2,.8,.2,1);
   border-radius: 24px 24px 0 0; padding: 10px var(--gutter) calc(env(safe-area-inset-bottom) + 18px); box-shadow: var(--shadow); }
 .sheet-grip { height: 26px; margin: -10px calc(-1 * var(--gutter)) 4px; display: grid; place-items: center; touch-action: none; cursor: grab; }
@@ -315,14 +315,14 @@ label.tog input { width: 22px; height: 22px; accent-color: var(--accent); }
 .obp span { font-size: 1.6rem; width: 40px; }
 .obp input { flex: 1; min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); padding: 8px 12px; font-size: 1.05rem; }
 .segopt { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
-.segopt:has(input:checked) { background: var(--sun); color: var(--sun-ink); border-color: var(--sun); font-weight: 700; }
+.segopt.on, .segopt:has(input:checked) { background: var(--sun); color: var(--sun-ink); border-color: var(--sun); font-weight: 700; }
 .ob .seg { justify-content: center; }
 .guide .head button[aria-pressed] { min-width: 44px; padding: 8px; }
 
 .map-tools { flex-wrap: nowrap; margin: 6px 0; } .map-tools button { min-height: 40px; padding: 6px 12px; font-size: .9rem; flex: 1; white-space: nowrap; }
 .mapseg { display: grid; grid-template-columns: 1fr 1fr; } .mapseg button { min-height: 40px; }
 .legend { font-size: .75rem; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
-.mapview { height: calc(100dvh - 300px); }
+.mapview { height: calc(100vh - 300px); height: calc(100dvh - 300px); }
 
 /* phone numbers (Gezin) and call buttons (Kind kwijt?) */
 .person .phone { grid-column: 1 / -1; }
@@ -388,11 +388,11 @@ svg .pulse { animation: pulse 1.6s ease-out infinite; transform-box: fill-box; t
 .alt .ic { width: 44px; display: grid; place-items: center; }
 /* map: controls and legend float on the map, so the map gets the space */
 .mapbox { position: relative; }
-.mapview { height: calc(100dvh - 215px); min-height: 360px; }
+.mapview { height: calc(100vh - 215px); height: calc(100dvh - 215px); min-height: 360px; }
 .map-tools.ov { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
 .map-tools.ov button { width: 46px; height: 46px; min-height: 46px; padding: 0; flex: none; border-radius: 50%; font-size: 1.25rem; box-shadow: var(--shadow); background: var(--surface); }
 .map-tools.ov button.wide { width: auto; padding: 0 14px; border-radius: 999px; font-size: .9rem; font-weight: 700; background: var(--sun); color: var(--sun-ink); }
-.legend.ov { position: absolute; left: 10px; bottom: 10px; margin: 0; padding: 6px 10px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: var(--shadow); font-size: .72rem; max-width: calc(100% - 20px); white-space: normal; }
+.legend.ov { position: absolute; left: 10px; bottom: 10px; margin: 0; padding: 6px 10px; border-radius: 12px; background: var(--surface); background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: var(--shadow); font-size: .72rem; max-width: calc(100% - 20px); white-space: normal; }
 /* list: "may not" persons clearer (crossed out instead of almost invisible) */
 .dot.no { opacity: .55; position: relative; }
 .dot.no::after { content: ""; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px; background: var(--bad); transform: rotate(-35deg); border-radius: 2px; }
@@ -494,5 +494,5 @@ html { transition: background-color .4s; }
 .pocket .pk-time { font-family: var(--display); font-size: 4.2rem; font-weight: 600; color: #b5b5b5; line-height: 1; }
 .pocket .pk-what { font-size: 1.15rem; color: #a5a5a5; }
 .pocket .pk-auto, .pocket .pk-gps { font-size: .95rem; }
-.pocket .pk-hint { position: absolute; bottom: calc(28px + env(safe-area-inset-bottom)); font-size: .9rem; color: #5c5c5c; }
+.pocket .pk-hint { position: absolute; bottom: 24%; left: 24px; right: 24px; font-size: .9rem; color: #5c5c5c; }
 .autolog .linkbtn { min-height: 44px; padding: 10px 6px; margin: -10px 0; }

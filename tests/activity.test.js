@@ -27,7 +27,7 @@ function world({ target = null, foods = [], mealTime = false, inPark = () => tru
     const ev = detect(tr, { now, target: T, foods, mealTime, ate: fam.ate, pause: fam.pause, entrance: ENTRANCE, inPark, carT, gap: r.ok ? r.gap : null });
     for (const e of ev) {
       events.push(e);
-      if (T && e.type === 'queue') T.queuedAt = e.at;
+      if (T && e.type === 'queue') { T.queuedAt = e.at; T.queuedAuto = true; }
       if (T && e.type === 'board') T.boardedAt = e.at;
       if (e.type === 'ate') fam.ate = e.at;
       if (e.type === 'pause') fam.pause = e.at;
@@ -258,4 +258,26 @@ test('review fixes: a queue tapped far from the ride point is never auto-ended; 
   c.tr.drive = { ...move(ENTRANCE, -300, 0), t: T0 - 3 * 3600e3, n: 4 };
   c.stay(move(ENTRANCE, -300, 0), 60);
   assert.ok(!c.types().includes('car'));
+});
+
+test('iPhone review: a tapped queue is never auto-unqueued; no eating/resting detection while a queue is open', () => {
+  // tapped "In de rij" right after walking past the ride point, then the queue snakes > rOut away
+  const w = world({ target: { a: kids, setAt: T0, wait: 20 } });
+  w.walk(move(kids, -150, 0), kids);
+  w.stay(kids, 100);
+  w.T.queuedAt = w.now(); // tapped, not detected: queuedAuto stays false
+  w.walk(kids, move(kids, 140, 0));
+  w.stay(move(kids, 140, 0), 120);
+  assert.ok(!w.types().includes('unqueue'), w.types().join(','));
+  // standing still 20 min near a snack bar at lunch while some queue is open → nothing
+  const food = FOOD.find((f) => f.seat && !f.approx);
+  const q = world({ foods: FOOD, mealTime: true });
+  const tr = q.tr; const T1 = T0;
+  q.stay(food, 20 * 60, { step: 10 });
+  assert.ok(q.types().includes('ate'), 'without a queue it is eating');
+  const r = newTracker();
+  let now = T1;
+  for (let s = 0; s < 20 * 60; s += 10) { addFix(r, { ...food, acc: 8, t: now }, now); now += 10000; }
+  assert.deepEqual(detect(r, { now: now - 10000, target: null, queueing: true, foods: FOOD, mealTime: true, ate: 0, pause: 0 }), []);
+  void tr;
 });

@@ -155,7 +155,8 @@ export function apply(fam, act, now) {
       target.queued = target.queued || t;
       // the second phone (or a late replay) tapping it again keeps the first start and "aan de beurt"
       if (old) { if (old.w == null) old.w = num(act.wait, 0, 300, null); break; }
-      target.q = { ...(target.q || {}), [part]: { t, w: num(act.wait, 0, 300, null), g: {} } };
+      // auto: started by the location detection (only those may also be ended by it)
+      target.q = { ...(target.q || {}), [part]: { t, w: num(act.wait, 0, 300, null), g: {}, ...(act.auto === true ? { auto: true } : {}) } };
       break;
     }
     // left the queue without riding (tapped, or detected: back out of the ride area after a couple of minutes)

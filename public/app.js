@@ -1,5 +1,6 @@
 // Pretpark: the screens. State lives in S; changes call render(). The shared family state lives on the server
 // (family.js actions, versioned by `updated`); wait times come from /api/live; walking routes from route.js.
+import './compat.js'; // first: fallbacks for older iPhones
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
 import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor } from './logic.js';
 import { QUESTS, FACTS } from './fun.js';
@@ -52,11 +53,13 @@ const hasToddler = () => people().some((p) => p.kind === 'child' && p.height < 1
 
 // ---------- network
 // Errors: e.offline (no network or too slow), e.status 401 (Cloudflare Access session expired: log in again)
+// AbortSignal.timeout exists from iOS 16: older phones get the same with a controller and a timer
+const timeoutSignal = (ms) => { if (AbortSignal.timeout) return AbortSignal.timeout(ms); const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal; };
 async function api(path, opts = {}) {
   let res;
   try {
     res = await fetch(path, {
-      ...opts, redirect: 'manual', signal: AbortSignal.timeout?.(opts.timeout || 7000),
+      ...opts, redirect: 'manual', signal: timeoutSignal(opts.timeout || 7000),
       headers: { 'content-type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
   } catch {
@@ -271,13 +274,15 @@ function myTarget() {
   const i = myIdx(plan), pt = plan.parts[i];
   if (!pt) return null;
   const q = t.q?.[i] || (!t.q && t.queued ? { t: t.queued } : null);
-  return { i, plan, a: pt.rest ? null : byId[pt.id], rest: !!pt.rest, setAt: t.setAt, queuedAt: q?.t || null, boardedAt: q?.b || null,
+  return { i, plan, a: pt.rest ? null : byId[pt.id], rest: !!pt.rest, setAt: t.setAt, queuedAt: q?.t || null, boardedAt: q?.b || null, queuedAuto: !!q?.auto,
     wait: q?.w ?? (pt.id ? status(S.live, pt.id).wait ?? pt.wait : null) };
 }
 function runDetect(gap) {
-  if (!S.auto || !S.fam || S.sim || S.manual) return;
+  if (!S.auto || !S.fam || S.sim || (S.manual && Date.now() - S.manual.t < 20 * 60e3)) return; // a chosen spot only counts 20 min
   const T = myTarget();
-  const ev = detect(S.tr, { now: Date.now(), target: T, foods: FOOD, mealTime: isMealTime(new Date()), ate: S.fam.ate, pause: S.fam.pause,
+  const tq = S.fam.target;
+  const queueing = !!tq && (Object.values(tq.q || {}).some((q) => !q.b) || (!tq.q && !!tq.queued));
+  const ev = detect(S.tr, { now: Date.now(), target: T, queueing, foods: FOOD, mealTime: isMealTime(new Date()), ate: S.fam.ate, pause: S.fam.pause,
     entrance: ENTRANCE, inPark: insidePark, carT: S.fam.car?.t || 0, gap });
   if (ev.length) saveTracker();
   for (const e of ev) autoApply(e, T).then((done) => { if (done === false) setTimeout(() => { delete S.tr.emitted[e.key]; }, 120e3); });
@@ -299,7 +304,7 @@ async function autoApply(e, T) {
   const name = T?.a?.name || '';
   switch (e.type) {
     case 'queue':
-      if (!(await act({ type: 'queue', part: T.i, wait: T.wait, at: e.at }, true))) return false;
+      if (!(await act({ type: 'queue', part: T.i, wait: T.wait, at: e.at, auto: true }, true))) return false;
       autoLog(`⏳ In de rij bij ${name} sinds ${hhmm(e.at)}`, () => act({ type: 'unqueue', part: T.i }), `⏳ In de rij bij ${name} (automatisch)`);
       break;
     case 'board':
@@ -344,9 +349,11 @@ function autoCard() {
 }
 
 // ---------- pocket mode: screen on (black) so the location keeps coming while the phone is in a pocket
+// iOS home-screen apps only keep the screen on from iOS 18.4 (the API exists earlier but does nothing there)
+const iosOld = (() => { const m = navigator.userAgent.match(/OS (\d+)_(\d+)/); return /iPhone|iPad/.test(navigator.userAgent) && navigator.standalone && m && (+m[1] < 18 || (+m[1] === 18 && +m[2] < 4)); })();
 async function openPocket() {
   // only useful when the screen really stays on: a web page gets no location with the screen off
-  if (!(await wake(true))) { toast('Zakmodus lukt niet op deze gsm: het scherm mag niet aan blijven (iPhone-beginschermapp: iOS 18.4 of nieuwer nodig, of spaarstand staat aan).', null, 7000); return; }
+  if (iosOld || !(await wake(true))) { toast('Zakmodus lukt niet op deze gsm: het scherm mag niet aan blijven (iPhone-beginschermapp: iOS 18.4 of nieuwer nodig, of spaarstand staat aan).', null, 7000); return; }
   S.pocket = true;
   $('#pocket').hidden = false; openDialog($('#pocket'));
   renderPocket();
@@ -1042,9 +1049,11 @@ const closers = {
 {
   const pk = document.getElementById('pocket');
   let y0 = null;
-  pk?.addEventListener('touchstart', (e) => { y0 = e.touches[0].clientY; }, { passive: true });
+  // a swipe starting in the bottom 20% is the iPhone's Home gesture, not ours
+  pk?.addEventListener('touchstart', (e) => { const y = e.touches[0].clientY; y0 = y < innerHeight * 0.8 ? y : null; }, { passive: true });
   pk?.addEventListener('touchend', (e) => { if (y0 != null && y0 - e.changedTouches[0].clientY > 160) closePocket(); y0 = null; });
-  pk?.addEventListener('dblclick', closePocket); // mouse / desktop
+  pk?.addEventListener('touchcancel', () => { y0 = null; });
+  if (matchMedia('(pointer: fine)').matches) pk?.addEventListener('dblclick', closePocket); // mouse only: two taps through fabric must not open
 }
 addEventListener('pagehide', () => store.set('tracker', S.tr));
 setInterval(() => { if (S.pocket) renderPocket(); }, 30e3);
@@ -1283,7 +1292,7 @@ async function finishPlan({ auto = false, at } = {}) {
     return;
   }
   const before = ids.map((id) => num(S.fam.done?.[id]));
-  if (!(await act({ type: 'done', ids, ...(t ? { target: t.setAt } : {}), ...(plan && !unknown ? { part: i } : {}), ...(at ? { at } : {}) }, auto))) return auto ? false : undefined;
+  if (!(await act({ type: 'done', ids, ...(t && auto ? { target: t.setAt } : {}), ...(plan && !unknown ? { part: i } : {}), ...(at ? { at } : {}) }, auto))) return auto ? false : undefined;
   if (auto) {
     // only offer "Klopt niet" when our done really counted (not when the other phone had already finished it)
     const counted = ids.some((id, k) => num(S.fam.done?.[id]) > before[k]);
@@ -1597,7 +1606,7 @@ async function processUploads() {
       if (u.thumb) fd.append('thumb', u.thumb, 'thumb.jpg');
       fd.append('meta', JSON.stringify(u.meta));
       let res;
-      try { res = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual', signal: AbortSignal.timeout?.(120000) }); }
+      try { res = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual', signal: timeoutSignal(120000) }); }
       catch { S.offline = true; break; } // no signal: try again later
       if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); break; }
       if (res.status === 503) { S.albumOff = true; break; }
@@ -2168,10 +2177,14 @@ document.addEventListener('touchend', (e) => {
 });
 addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); processUploads(); flushChat(); loadChat(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { store.set('tracker', S.tr); return; }
+  if (document.hidden) { store.set('tracker', S.tr); if (S.pocket) S.pocketBroke = Date.now(); return; }
+  if (S.pocket && S.pocketBroke) { S.pocketBroke = 0; toast('Het scherm ging toch uit: in die tijd kreeg de app geen locatie. Ik vul het gat zelf aan.', null, 7000); }
   loadLive(); pollFamily();
   if (S.guide || !$('#tview').hidden || S.pocket) wake(true); // the system drops the wake lock when the app goes to the background
-  startGps(); // phones pause or kill the location watch in the background; a fresh one picks up where we are now
+  // phones pause the location watch in the background and usually resume it; only when no fix came within 8 s start a
+  // fresh one (restarting always can ask for permission again on iOS), and never after location was refused
+  const back = Date.now();
+  setTimeout(() => { if (!document.hidden && S.sim !== 'off' && (S.tr.raw?.t || 0) < back) startGps(); }, 8000);
 });
 
 // ---------- start

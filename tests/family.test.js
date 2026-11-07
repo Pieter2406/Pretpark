@@ -313,3 +313,12 @@ test('done for an old plan counts nothing (two phones detecting it); unqueue rem
   assert.equal(h.target.q, undefined);
   assert.equal(h.target.queued, undefined);
 });
+
+test('queue: only the detection marks a queue as automatic', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  f = apply(f, { type: 'queue', wait: 10, auto: true }, NOW - 10 * 60e3);
+  assert.equal(f.target.q[0].auto, true);
+  let g = withTarget(together, NOW - 3600e3);
+  g = apply(g, { type: 'queue', wait: 10, auto: 'yes' }, NOW - 10 * 60e3);
+  assert.equal(g.target.q[0].auto, undefined);
+});

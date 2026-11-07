@@ -212,3 +212,24 @@ No accounts; knowing the family id is the access.
   good one, but never feed detection; fix times are clamped to now; a failed auto action may retry after 2 min;
   "Klopt niet" only when our own done counted. In pocket mode there are no toasts (a tap through the fabric must not
   undo); the last automatic action keeps its "Klopt niet" on Nu for 15 min (`S.lastUndo`, `autoCard`).
+
+## iPhone / iOS compatibility (checked 7 Nov 2026, also run in WebKit)
+- Minimum for the app: iOS 15.0 with `public/compat.js` (structuredClone, Array/String `.at`, `findLast(Index)`
+  fallbacks; imported first by app.js) and CSS fallbacks (vh before dvh, a plain background before `color-mix`,
+  `-webkit-backdrop-filter`). `api()` uses `timeoutSignal` (AbortSignal.timeout only from iOS 16).
+- `public/vendor/pdf.min.mjs` and `pdf.worker.min.mjs` got a one-line `Promise.withResolvers` polyfill at the top
+  (pdf.js 4.10 needs it, iOS < 17.4 lacks it; pdf.js polyfills Promise.try and base64 itself). Keep it when updating pdf.js.
+- Feature floors: Web Push and Wake Lock iOS 16.4 (push only in the home-screen app); Wake Lock in the home-screen app
+  only from iOS 18.4 (`iosOld` → pocket mode refuses); `navigator.vibrate` doesn't exist on iOS (always `?.`);
+  `interactive-widget` is ignored by Safari (the chat uses visualViewport instead).
+- iOS gestures: the pocket swipe only counts when it starts above the bottom 20% (the Home gesture lives there);
+  double click only with a mouse. The location watch is only restarted when no fix came within 8 s after returning
+  (restarting can re-prompt for permission on iOS) and never after a refusal. If the screen went off in pocket mode
+  anyway, the app says so on return.
+- Running WebKit here: `PLAYWRIGHT_BROWSERS_PATH=<dir> npx playwright@<same version> install webkit` + `install-deps
+  webkit`; the service worker intercepts `/api/live` in WebKit, so `route()` mocks don't apply there (real data).
+- Live data guard (worker/rules.js `liveRides`): waits > 180 min or the same wait ≥ 60 on ≥ 70% of rides are
+  placeholders (Walibi's feed said 222 for every ride before opening on 7 Nov) → `w: null` (unknown).
+- Automatic detection: only queues it started itself (`q.auto`) can be auto-"unqueued"; no eating/resting detection
+  while a queue of the plan is open; a manually chosen spot only blocks detection for 20 min; `done` carries `target`
+  only when automatic (a tapped, offline "Gedaan" is never dropped).

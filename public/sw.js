@@ -7,7 +7,7 @@
 const VERSION = 'pretpark-81848f0da5eb';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
-  '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js', '/fun.js', '/activity.js',
+  '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js', '/fun.js', '/activity.js', '/compat.js',
 ];
 
 self.addEventListener('install', (e) => {

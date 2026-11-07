@@ -171,8 +171,8 @@ test('live: wait and status coerced, scheduleKnown reported', async () => {
   const rides = r.data.rides;
   assert.deepEqual(rides[ATTRACTIONS[0].id], { s: 'OPERATING', w: 12 });
   assert.deepEqual(rides[ATTRACTIONS[1].id], { s: 'CLOSED', w: null });
-  assert.deepEqual(rides[ATTRACTIONS[2].id], { s: 'DOWN', w: 600 });
-  assert.deepEqual(rides[ATTRACTIONS[3].id], { s: 'REFURBISHMENT', w: 0 });
+  assert.deepEqual(rides[ATTRACTIONS[2].id], { s: 'DOWN', w: null });
+  assert.deepEqual(rides[ATTRACTIONS[3].id], { s: 'REFURBISHMENT', w: null });
   assert.equal(rides.show, undefined);
   assert.deepEqual(liveRides(null), {});
   assert.deepEqual(liveRides([{ id: 'x', entityType: 'ATTRACTION', status: 'OPERATING', queue: { STANDBY: { waitTime: NaN } } }]), { x: { s: 'OPERATING', w: null } });
@@ -294,4 +294,16 @@ test('tickets: a ticket can be marked as the parking ticket (person "car")', asy
   const list = (await call('GET', `/api/tickets/${id}`)).data;
   assert.equal(list.find((t) => t.id === 'parkingticket01').person, 'car');
   assert.equal(list.find((t) => t.id === 'parkingticket02').person, null);
+});
+
+test('liveRides: placeholder waits (222 everywhere before opening, the same long wait on most rides) become unknown', () => {
+  const ride = (id, w, status = 'OPERATING') => ({ id, entityType: 'ATTRACTION', status, queue: { STANDBY: { waitTime: w } } });
+  const all222 = liveRides(['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ride(id, 222)));
+  assert.ok(Object.values(all222).every((r) => r.w === null && r.s === 'OPERATING'));
+  const same90 = liveRides([ride('a', 90), ride('b', 90), ride('c', 90), ride('d', 90), ride('e', 90), ride('f', 15)]);
+  assert.deepEqual(Object.values(same90).map((r) => r.w), [null, null, null, null, null, 15]);
+  const normal = liveRides([ride('a', 5), ride('b', 5), ride('c', 5), ride('d', 5), ride('e', 5), ride('f', 45)]);
+  assert.deepEqual(Object.values(normal).map((r) => r.w), [5, 5, 5, 5, 5, 45]); // a quiet morning is real
+  assert.equal(liveRides([ride('a', 181)]).a.w, null);
+  assert.equal(liveRides([ride('a', 180)]).a.w, 180);
 });

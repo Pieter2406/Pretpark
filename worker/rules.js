@@ -8,8 +8,14 @@ export function liveRides(liveData) {
   for (const x of Array.isArray(liveData) ? liveData : []) {
     if (x?.entityType !== 'ATTRACTION' || typeof x.id !== 'string') continue;
     const w = x.queue?.STANDBY?.waitTime;
-    rides[x.id] = { s: STATUSES.includes(x.status) ? x.status : 'CLOSED', w: Number.isFinite(w) ? Math.min(600, Math.max(0, Math.round(w))) : null };
+    // a wait over 3 hours is not a real queue (Walibi's feed says 222 for every ride before opening): unknown
+    rides[x.id] = { s: STATUSES.includes(x.status) ? x.status : 'CLOSED', w: Number.isFinite(w) && w >= 0 && w <= 180 ? Math.round(w) : null };
   }
+  // the same long wait on most rides at once is a placeholder, not a crowd: unknown too
+  const ws = Object.values(rides).map((r) => r.w).filter((w) => w != null);
+  const count = {}; for (const w of ws) count[w] = (count[w] || 0) + 1;
+  const [top, n] = Object.entries(count).sort((a, b) => b[1] - a[1])[0] || [];
+  if (ws.length >= 5 && +top >= 60 && n / ws.length >= 0.7) for (const r of Object.values(rides)) if (r.w === +top) r.w = null;
   return rides;
 }
 

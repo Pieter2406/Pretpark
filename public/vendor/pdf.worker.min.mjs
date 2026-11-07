@@ -1,3 +1,4 @@
+/* Pretpark: Promise.withResolvers for iOS < 17.4 (pdf.js 4.10 uses it without a fallback) */ if (typeof Promise.withResolvers !== "function") Promise.withResolvers = function () { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 /**
  * @licstart The following is the entire license notice for the
  * JavaScript code in this page

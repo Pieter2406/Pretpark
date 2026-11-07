@@ -160,7 +160,8 @@ const EXIT_EXTRA = 50; // m: hysteresis between "at the ride" and "left the ride
 //   now, target: { a (attraction), setAt, queuedAt, boardedAt, rest (my part rests) } | null,
 //   foods: [{ id, name, lat, lon, seat, approx }], mealTime: bool, ate: ms, pause: ms,
 //   entrance: {lat, lon}, inPark: (pos) => bool, carT: ms (last saved car spot), gap: ms (of the latest fix, from addFix)
-//   target.wait = posted wait when we joined the queue (or now)
+//   target.wait = posted wait when we joined the queue (or now); target.queuedAuto = the queue was started by detect
+//   queueing: some queue of the current plan is open (no sitting/eating detection then)
 // }
 // → [{ type: 'queue'|'board'|'done'|'unqueue'|'ate'|'pause'|'car'|'ask-done', at, ...}]
 export function detect(tr, ctx) {
@@ -205,8 +206,8 @@ export function detect(tr, ctx) {
       const doneAt = gapMode ? Math.min(now, Math.max(lastIn, start + (wait + ride) * 60e3)) : Math.min(now, lastIn + 60e3);
       const mins = ((gapMode ? doneAt : lastIn) - start) / 60e3;
       if (mins >= sure || T.boardedAt) once(`d:${key}`, { type: 'done', at: doneAt, gap: !!gapMode });
-      else if (mins < ride + 2 && T.queuedAt) once(`u:${key}`, { type: 'unqueue', at: lastIn });
-      else if (T.queuedAt) once(`ask:${key}`, { type: 'ask-done', at: now });
+      else if (mins < ride + 2 && T.queuedAt && T.queuedAuto) once(`u:${key}`, { type: 'unqueue', at: lastIn }); // never end a tapped queue
+      else if (T.queuedAt && (T.queuedAuto || mins >= ride + 2)) once(`ask:${key}`, { type: 'ask-done', at: now });
     }
     // closed the app before reaching the ride, back much later somewhere else: ask, don't guess
     if (!start && ctx.gap != null && ctx.gap >= 20 * 60e3 && now - T.setAt > 25 * 60e3 && dist(a, last) > rOut + 50) once(`ask:${key}`, { type: 'ask-done', at: now });
@@ -215,7 +216,8 @@ export function detect(tr, ctx) {
   const still = spread(h, 12 * 60e3, now);
   const span = h.length ? now - h.find((p) => now - p.t <= 12 * 60e3)?.t : 0;
   const atTarget = T?.a && dist(T.a, last) <= rideRadius(T.a) + EXIT_EXTRA;
-  if (still.c && still.r <= 30 && span >= 11 * 60e3 && !atTarget) {
+  // standing still in any queue (also the other half's ride when we don't know who we are) is not eating or resting
+  if (still.c && still.r <= 30 && span >= 11 * 60e3 && !atTarget && !ctx.queueing) {
     const sat = dwell(h, still.c, 35, now);
     const food = (ctx.foods || []).map((f) => ({ f, d: dist(f, still.c) })).filter(({ f, d }) => d <= (f.approx ? 90 : 40)).sort((x, y) => x.d - y.d)[0];
     const sitAt = sat.since || now - 12 * 60e3;
