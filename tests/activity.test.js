@@ -229,3 +229,33 @@ test('fuzz: 60 real queue → ride → leave days with noise and teleports are s
   }
   assert.ok(ok >= 57, `recognised ${ok}/60`);
 });
+
+test('review fixes: a queue tapped far from the ride point is never auto-ended; a poor fix after a gap decides nothing', async () => {
+  const { freshTracker, newTracker: nt } = await import('../public/activity.js');
+  // "In de rij" tapped 150 m from Cobra's map point (end of a long queue), then walking around there
+  const w = world({ target: { a: cobra, setAt: T0, wait: 45, queuedAt: T0 + 60e3 } });
+  w.skip(60e3);
+  w.stay(move(cobra, 150, 0), 10 * 60);
+  w.walk(move(cobra, 150, 0), move(cobra, 160, 60));
+  assert.deepEqual(w.types(), []);
+  // queued at the ride, app closed 20 min, first fix after is a poor Wi-Fi fix far away (acc 50) → nothing yet;
+  // a minute of good fixes far away → done
+  const g = world({ target: { a: cobra, setAt: T0, wait: 25 } });
+  g.walk(move(cobra, -150, 0), cobra);
+  g.stay(cobra, 5 * 60);
+  g.skip(20 * 60e3);
+  g.feed(move(cobra, 250, 0), { acc: 50 });
+  assert.deepEqual(g.types(), ['queue']);
+  g.skip(5000);
+  g.stay(move(cobra, 260, 10), 80, { acc: 10 });
+  assert.deepEqual(g.types(), ['queue', 'done']);
+  // yesterday's tracker starts fresh; an old drive never makes a car spot
+  const old = nt(); old.lastGood = T0 - 20 * 3600e3; old.drive = { lat: 1, lon: 1, t: T0 - 20 * 3600e3, n: 5 };
+  assert.notEqual(freshTracker(old, T0), old);
+  const today = nt(); today.lastGood = T0 - 3600e3;
+  assert.equal(freshTracker(today, T0), today);
+  const c = world({ inPark: () => false });
+  c.tr.drive = { ...move(ENTRANCE, -300, 0), t: T0 - 3 * 3600e3, n: 4 };
+  c.stay(move(ENTRANCE, -300, 0), 60);
+  assert.ok(!c.types().includes('car'));
+});

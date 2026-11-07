@@ -31,6 +31,8 @@ export const LIMITS = {
   histMin: 45, // minutes of cleaned history kept
 };
 
+// A tracker saved more than 6 h ago (yesterday) starts fresh: old drives, "been near" and history mean nothing now
+export const freshTracker = (t, now) => (t && Array.isArray(t.hist) && t.far && now - (t.lastGood || 0) < 6 * 3600e3 ? t : newTracker());
 export function newTracker() {
   return { kf: null, raw: null, rej: [], hist: [], fast: 0, drive: null, far: { n: 0, since: 0, on: false }, approx: 0, emitted: {}, lastGood: 0 };
 }
@@ -166,17 +168,20 @@ export function detect(tr, ctx) {
   const h = tr.hist, now = ctx.now;
   const last = h.at(-1);
   if (!last || now - last.t > 3 * 60e3) return ev; // no fresh position: decide nothing
-  const once = (key, e) => { if (tr.emitted[key]) return; tr.emitted[key] = now; ev.push(e); };
+  const once = (key, e) => { if (tr.emitted[key]) return; tr.emitted[key] = now; ev.push({ ...e, key }); };
   const T = ctx.target;
   if (T?.a && !T.rest) {
     const a = T.a, rIn = rideRadius(a), rOut = rIn + EXIT_EXTRA;
     const key = `${a.id}:${T.setAt}`;
     const at = dwell(h, a, rIn, now);
-    const vis = visits(h, a, rIn, T.setAt - 60e3);
+    // visits since the plan (and, once queued, around/after the queue start: a queue tapped far from the ride's map
+    // point, e.g. at the end of a long coaster queue, has no visit and is never auto-ended)
+    const vis = visits(h, a, rIn, T.setAt - 60e3).filter((v) => !T.queuedAt || v.e >= T.queuedAt - 60e3);
     const outNow = h.filter((p) => now - p.t <= 90e3);
     const leftFor = outNow.length >= 2 && outNow.every((p) => dist(a, p) > rOut + Math.min(p.a || 0, 25)) && now - outNow[0].t >= 60e3;
     // (gap) the app was closed: the last fix before the gap was at the ride, the first one after is far away
-    const gapLeft = ctx.gap != null && ctx.gap >= LIMITS.gap && vis.length && dist(a, last) > rOut + 50;
+    // a single fix after a long gap only decides when it is a good one (≤ 25 m); otherwise wait for 60 s of fixes
+    const gapLeft = ctx.gap != null && ctx.gap >= LIMITS.gap && vis.length && (last.a || 99) <= 25 && dist(a, last) > rOut + 50;
     const from = at.since == null ? null : Math.max(at.since, T.setAt);
     if (!T.queuedAt && from != null && now - from >= 3 * 60e3 && at.n >= 3) {
       const sp = spread(h, 3 * 60e3, now);
@@ -186,15 +191,20 @@ export function detect(tr, ctx) {
       once(`b:${key}`, { type: 'board', at: tr.fast - 30e3 });
     }
     const start = T.queuedAt || (vis.some((v) => v.e - v.s >= 3 * 60e3) ? vis[0].s : null);
-    if (start && (leftFor || gapLeft)) {
+    // the app was closed right after our last visit (the next fix came ≥ 10 min later): how long we stayed is unknown,
+    // so estimate it like a gap, also when the decision itself waits for a minute of good fixes
+    const vEnd = vis.at(-1)?.e, nxt = vEnd != null ? h.find((p) => p.t > vEnd) : null;
+    const closedThere = !!nxt && nxt.t - vEnd >= LIMITS.gap;
+    if (start && vis.length && (leftFor || gapLeft)) {
       const lastIn = vis.at(-1)?.e || start;
       // How long we were at the ride decides: long enough for (part of) the posted wait + the ride → done; barely
       // longer than the ride → left the queue; in between it could be either (posted waits are often too high) → ask.
       const wait = T.wait ?? 10, ride = a.ride || 3;
       const sure = ride + Math.max(1, 0.4 * wait - 1);
-      const doneAt = gapLeft ? Math.min(now, Math.max(lastIn, start + (wait + ride) * 60e3)) : Math.min(now, lastIn + 60e3);
-      const mins = ((gapLeft ? doneAt : lastIn) - start) / 60e3;
-      if (mins >= sure || T.boardedAt) once(`d:${key}`, { type: 'done', at: doneAt, gap: !!gapLeft });
+      const gapMode = gapLeft || closedThere;
+      const doneAt = gapMode ? Math.min(now, Math.max(lastIn, start + (wait + ride) * 60e3)) : Math.min(now, lastIn + 60e3);
+      const mins = ((gapMode ? doneAt : lastIn) - start) / 60e3;
+      if (mins >= sure || T.boardedAt) once(`d:${key}`, { type: 'done', at: doneAt, gap: !!gapMode });
       else if (mins < ride + 2 && T.queuedAt) once(`u:${key}`, { type: 'unqueue', at: lastIn });
       else if (T.queuedAt) once(`ask:${key}`, { type: 'ask-done', at: now });
     }
@@ -214,7 +224,7 @@ export function detect(tr, ctx) {
     else if (sat.ms >= 12 * 60e3 && now - (ctx.pause || 0) > 60 * 60e3 && now - (ctx.ate || 0) > 30 * 60e3) once(`pause:${Math.floor(sitAt / 1800e3)}`, { type: 'pause', at: sitAt });
   }
   // the car: we were driving (phone speed ≥ 5 m/s on 2+ fixes) and now walk or stand within 1 km of the entrance
-  if (ctx.entrance && tr.drive?.n >= 2 && now - (ctx.carT || 0) > 12 * 3600e3 && !ctx.inPark?.(tr.drive)) { // a coaster is fast too
+  if (ctx.entrance && tr.drive?.n >= 2 && now - tr.drive.t < 2 * 3600e3 && now - (ctx.carT || 0) > 12 * 3600e3 && !ctx.inPark?.(tr.drive)) { // a coaster is fast too
     const d = tr.drive;
     const slow = h.filter((p) => p.t > d.t);
     const parked = slow.length >= 2 && slow.at(-1).t - slow[0].t >= 30e3 && dist(ctx.entrance, d) <= 1000 && dist(ctx.entrance, d) >= 60;

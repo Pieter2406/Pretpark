@@ -204,3 +204,11 @@ No accounts; knowing the family id is the access.
   New action `unqueue`.
 - Pocket mode (🫥 on Nu): black screen + wake lock so fixes keep coming; only a long swipe up (or double click) opens;
   refuses with an explanation when the wake lock is refused. ±10% battery per hour (screen on).
+- Review fixes: auto never sends `done` in a split while the other half isn't ready (only `ready`, once); leaving only
+  counts with a visit at/after the queue start (a queue tapped far from the map point is never auto-ended); a single
+  fix after a gap only decides when ≤ 25 m, and when the app closed at the ride the stay is estimated like a gap;
+  `freshTracker` drops a tracker from > 6 h ago and a drive older than 2 h never makes a car spot; the tracker is saved
+  at most every 15 s and when the app is hidden; poor fixes (65–200 m) still move the dot/arrow after 30 s without a
+  good one, but never feed detection; fix times are clamped to now; a failed auto action may retry after 2 min;
+  "Klopt niet" only when our own done counted. In pocket mode there are no toasts (a tap through the fabric must not
+  undo); the last automatic action keeps its "Klopt niet" on Nu for 15 min (`S.lastUndo`, `autoCard`).

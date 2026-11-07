@@ -495,3 +495,4 @@ html { transition: background-color .4s; }
 .pocket .pk-what { font-size: 1.15rem; color: #a5a5a5; }
 .pocket .pk-auto, .pocket .pk-gps { font-size: .95rem; }
 .pocket .pk-hint { position: absolute; bottom: calc(28px + env(safe-area-inset-bottom)); font-size: .9rem; color: #5c5c5c; }
+.autolog .linkbtn { min-height: 44px; padding: 10px 6px; margin: -10px 0; }
