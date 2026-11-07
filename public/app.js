@@ -28,6 +28,7 @@ const S = {
   // location cleaning + "what are we doing" (activity.js); auto = recognise queue/done/eat/rest/car by itself
   tr: freshTracker(store.get('tracker', null), Date.now()),
   auto: store.get('auto', true), autoLog: store.get('autoLog', []), pendingRate: null, ask: null, pocket: false, gpsReject: '',
+  gpsStats: { ok: 0, since: Date.now() }, otAll: null, otAllAt: 0,
   tickets: [], ticketBusy: '', auth: false, liveStale: false, outbox: [], offline: false,
   album: store.get('c:album', null)?.v || [], uploads: [], upMsg: '', albumOff: false,
   tab: 'now', mapMode: 'map', guide: null, filter: 'us', placing: false, dismissed: store.get('dismissed', {}),
@@ -163,8 +164,14 @@ async function loadLive() {
   } catch { if (!S.live) S.live = cached.load('live')?.v || null; S.liveStale = !!S.live; }
   recompute(); render();
 }
+async function loadOtAll() {
+  if (!S.famId || Date.now() - S.otAllAt < 55e3) return;
+  S.otAllAt = Date.now();
+  try { S.otAll = (await api(`/api/otsetup/${S.famId}?all=1`)).links || []; renderBanners(); if (S.tab === 'fam') renderLocCheck(); } catch { /* next time */ }
+}
 async function pollFamily() {
   if (document.hidden || !S.famId) return;
+  loadOtAll();
   if (!S.chatOpen) loadChat();
   await flushOutbox();
   if (S.outbox.length) return; // keep local changes until they're sent
@@ -217,7 +224,7 @@ function onGps(p) {
   const r = addFix(S.tr, { lat: c.latitude, lon: c.longitude, acc: c.accuracy, t, speed: c.speed ?? null }, now);
   saveTracker();
   if (!r.ok) {
-    S.gpsReject = r.reason;
+    S.gpsReject = r.reason; S.gpsStats[r.reason] = (S.gpsStats[r.reason] || 0) + 1;
     if (r.reason === 'approx') { if (!S.gps && S.sim === 'wait') S.sim = null; if (now - (onGps.bannerT || 0) > 30e3) { onGps.bannerT = now; renderBanners(); } }
     // a poor fix (under trees, between buildings) never feeds the detection, but when nothing better came for 30 s
     // it still moves the dot and the arrow, so the guide doesn't freeze
@@ -225,7 +232,7 @@ function onGps(p) {
     if (S.pocket) renderPocket();
     return;
   }
-  S.gpsReject = '';
+  S.gpsReject = ''; S.gpsStats.ok++;
   usePosition({ lat: r.pos.lat, lon: r.pos.lon, acc: r.pos.acc }, c, true, r.pos);
   runDetect(r.gap);
 }
@@ -816,6 +823,7 @@ function renderFam() {
       <div class="seg themeseg" role="radiogroup" aria-label="Kleuren">${[['sun', '🌅 Automatisch (zon)'], ['light', '☀️ Licht'], ['dark', '🌙 Donker'], ['system', '📱 Zoals mijn gsm']].map(([k, t]) => `<button role="radio" data-themepick="${k}" aria-checked="${S.theme === k}" aria-pressed="${S.theme === k}">${t}</button>`).join('')}</div>
       <p class="small muted" style="margin:6px 0 10px">${S.theme === 'sun' ? (() => { const st = sunTimes(new Date()); return `Vandaag licht van ${hhmm(st.rise)} tot zonsondergang om ${hhmm(st.set)}, daarna donker.`; })() : S.theme === 'system' ? 'Volgt de licht/donker-instelling van je gsm.' : ''}</p>
       <label class="tog"><input type="checkbox" data-setting="voice" ${S.voice ? 'checked' : ''}> 🔊 Gesproken aanwijzingen in de wandelgids</label></div>
+    <div class="card" id="locCheck"></div>
     <div class="card"><h2>📡 Volgen met de app dicht</h2>
       <p class="small muted" style="margin:0 0 8px">Met de gratis app OwnTracks herkent Pretpark ook wat jullie doen als de app dicht is en de gsm in je zak zit.</p>
       <button class="primary" data-go="ot" style="width:100%">📡 ${store.get('otActive', false) ? 'Bekijk de koppeling ✅' : 'Instellen (2 minuten)'}</button></div>
@@ -841,6 +849,7 @@ function renderFam() {
     <p class="muted small">Foto’s van attracties via Wikimedia Commons: ${[...new Set(Object.values(PHOTOS).map((p) => p.artist))].map(esc).join(', ')} (CC BY-SA 3.0/4.0, CC0, publiek domein; per foto vermeld).</p>
     <p class="muted small">Wachttijden: ThemeParks.wiki (live). Weer: MET Norway. Kaart: © OpenStreetMap-bijdragers. Foto’s blijven bewaard tot je ze verwijdert.</p>`;
   renderPush();
+  renderLocCheck(); loadOtAll();
 }
 
 // ---------- push notifications
@@ -1513,6 +1522,61 @@ function renderOt() {
     ${st?.active ? '<div class="row2"><button data-go="otstop">⏹️ Stoppen met volgen</button><button data-go="otnew">🔄 Nieuwe koppeling</button></div>' : ''}`;
 }
 
+// ---------- location check: per phone of the family, is location coming in? (Gezin card + a banner for the partner)
+const ago = (t) => { const m = Math.round((Date.now() - t) / 60e3); return m < 1 ? 'net nu' : m < 60 ? `${m} min geleden` : `om ${hhmm(t)}`; };
+const REJ = { acc: 'te onnauwkeurig', jump: 'onmogelijke sprong', stale: 'te oud', old: 'dubbel', approx: '“ongeveer”', bad: 'ongeldig' };
+// newest known position of a phone: what the server has (app or OwnTracks) and what OwnTracks reported
+function phoneLoc(dev) {
+  const pos = S.fam?.positions?.[dev]?.t || 0;
+  const ot = (S.otAll || []).find((l) => l.device === dev) || null;
+  return { pos, ot, otT: ot?.info?.t || 0, newest: Math.max(pos, ot?.info?.t || 0) };
+}
+function locLevel(dev) {
+  const { newest, ot } = phoneLoc(dev);
+  const age = Date.now() - newest;
+  if (dev === device && S.gps && Date.now() - S.gpsAt < 2 * 60e3) return 'ok';
+  if (!newest) return ot ? 'bad' : 'off';
+  return age < 10 * 60e3 ? 'ok' : age < 30 * 60e3 ? 'warn' : ot ? 'bad' : 'off';
+}
+function renderLocCheck() {
+  const el = $('#locCheck'); if (!el || !S.fam) return;
+  const devs = [...new Set([device, ...Object.keys(S.fam.me || {})])].filter((d) => d === device || S.fam.me?.[d]);
+  const dot = { ok: '🟢', warn: '🟠', bad: '🔴', off: '⚪' };
+  const rows = devs.map((d) => {
+    const p = person(S.fam.me?.[d]);
+    const { pos, ot, otT } = phoneLoc(d);
+    const lines = [];
+    if (ot) {
+      const i = ot.info || {};
+      lines.push(otT ? `📡 OwnTracks: ${ago(otT)}${i.acc != null ? ` · ±${i.acc} m` : ''}${i.batt != null ? ` · 🔋 ${i.batt}%` : ''}${Date.now() - otT > 10 * 60e3 ? ' · staat OwnTracks op <b>Actie</b>?' : ''}`
+        : i.contact ? `📡 OwnTracks verbonden (${ago(i.contact)}), nog geen locatie: kies <b>Actie</b> en tik ↑` : '📡 OwnTracks gekoppeld, nog niets ontvangen');
+    } else lines.push('📡 OwnTracks: niet gekoppeld <span class="muted">(volgt alleen als Pretpark open is)</span>');
+    if (d === device) {
+      const st = S.gpsStats, rej = Object.entries(st).filter(([k, v]) => REJ[k] && v).map(([k, v]) => `${v}× ${REJ[k]}`);
+      lines.push(S.sim === 'off' ? '🛰️ GPS in de app: <b>locatie staat uit</b>'
+        : S.gps ? `🛰️ GPS in de app: ${ago(S.gpsAt)} · ±${Math.round(S.gps.acc || 0)} m · ${st.ok} goed${rej.length ? `, genegeerd: ${rej.join(', ')}` : ''}` : '🛰️ GPS in de app: nog geen locatie');
+      if (Date.now() - S.tr.approx < 10 * 60e3) lines.push('⚠️ “Ongeveer”-locatie: zet <b>Exacte locatie</b> aan');
+      const a = S.autoLog[0];
+      lines.push(S.auto ? `🤖 Herkenning: ${a ? `${esc(a.text)} (${hhmm(a.t)})` : 'nog niets herkend'}` : '🤖 Herkenning staat uit');
+    } else if (pos) lines.push(`📍 Laatste positie bij de server: ${ago(pos)}`);
+    return `<div class="locrow"><div class="locwho">${dot[locLevel(d)]} <b>${p ? `${emoji(p)} ${esc(p.name)}` : 'Onbekend'}</b>${d === device ? ' <span class="muted">(deze gsm)</span>' : ''}</div>
+      <ul class="small">${lines.map((l) => `<li>${l}</li>`).join('')}</ul></div>`;
+  }).join('');
+  el.innerHTML = `<h2>📍 Locatie-check</h2>${rows}
+    <p class="small muted" style="margin:6px 0 0">🟢 locatie van de laatste 10 min · 🟠 10–30 min · 🔴 OwnTracks gekoppeld maar stil · ⚪ alleen als de app open is.</p>
+    <button class="ghost small" data-go="loccheck" style="width:100%">🔄 Vernieuwen</button>`;
+}
+// the partner's phone is linked to OwnTracks but went silent: say so (once per silence, dismissable)
+function partnerSilent() {
+  if (!S.fam || !S.otAll || !S.live?.open || Date.now() < S.live.open || (S.live.close && Date.now() > S.live.close)) return null;
+  for (const l of S.otAll) {
+    if (l.device === device || !S.fam.me?.[l.device] || !l.info?.t) continue;
+    const { newest } = phoneLoc(l.device);
+    if (Date.now() - newest > 15 * 60e3) return { dev: l.device, t: newest, who: person(S.fam.me[l.device]) };
+  }
+  return null;
+}
+
 // ---------- stickers: every ride you do is a sticker
 const stickerCount = () => ATTRACTIONS.filter((a) => S.fam?.done?.[a.id]).length;
 function stickerSheet() {
@@ -1959,10 +2023,14 @@ function renderBanners() {
   if (L?.close && Date.now() < L.close && L.close - Date.now() <= 45 * 60e3) {
     b.push(['closing', '⏰', `<b>Nog ${Math.round((L.close - Date.now()) / 60e3)} min open.</b> Tijd voor de laatste ronde${S.fam?.car ? ', daarna brengt 🚗 Auto je terug' : ''}.`]);
   }
+  const ps = partnerSilent();
+  if (ps && !S.dismissed['loc:' + ps.dev + ':' + ps.t]) {
+    b.push(['loc:' + ps.dev + ':' + ps.t, '📍', `<b>Geen locatie van ${esc(ps.who?.name || 'de andere gsm')} sinds ${ps.t ? hhmm(ps.t) : 'lang'}.</b> Staat OwnTracks daar nog op Actie? Bel even via 🆘 als je ze zoekt.`]);
+  }
   if (isDark() && new Date().getMonth() >= 9 && hasToddler() && !S.dismissed['night' + new Date().toDateString()]) {
     b.push(['night' + new Date().toDateString(), '🎃', '<b>Donker: scare zones.</b> Met de peuter op de brede paden blijven. Te eng? Hand op en “stop” zeggen.', 'night']);
   }
-  $('#banners').innerHTML = b.map(([k, i, t, cls]) => `<div class="banner ${cls || ''}"><span aria-hidden="true">${i}</span><span>${t}</span>${k.startsWith('night') ? `<button class="x" data-dismiss="${k}" aria-label="Verbergen">✕</button>` : ''}</div>`).join('');
+  $('#banners').innerHTML = b.map(([k, i, t, cls]) => `<div class="banner ${cls || ''}"><span aria-hidden="true">${i}</span><span>${t}</span>${(k.startsWith('night') || k.startsWith('loc:')) ? `<button class="x" data-dismiss="${k}" aria-label="Verbergen">✕</button>` : ''}</div>`).join('');
   const pill = $('#livePill');
   if (L) {
     pill.textContent = `${S.liveStale ? 'Laatst' : 'Live'} ${hhmm(L.t)}`;
@@ -2082,6 +2150,7 @@ document.addEventListener('click', async (e) => {
     case 'ratelater': S.pendingRate = null; render(); break;
     case 'pocket': openPocket(); break;
     case 'autoundo': await undoLast(); break;
+    case 'loccheck': S.otAllAt = 0; await loadOtAll(); renderLocCheck(); break;
     case 'ot': openOt(); break;
     case 'otclose': closeOt(); break;
     case 'otcopy': { const u = S.ot?.st?.token ? otUrl(S.ot.st.token) : ''; try { await navigator.clipboard.writeText(u); toast('Link gekopieerd'); } catch { toast('Kopiëren lukte niet: houd de link ingedrukt'); } break; }
@@ -2332,5 +2401,5 @@ async function afterFamily() {
   setInterval(loadLive, 60e3);
   setInterval(pollFamily, 15e3);
   setInterval(() => { if (!document.hidden) { processUploads(); if (S.tab === 'album' && !uploading) loadAlbum(); } }, 60e3);
-  setInterval(() => { applyTheme(); if (S.tab === 'now' && !S.guide && !document.activeElement?.closest('#view-now')) renderNow(); }, 30e3);
+  setInterval(() => { applyTheme(); if (S.tab === 'now' && !S.guide && !document.activeElement?.closest('#view-now')) renderNow(); if (S.tab === 'fam' && !document.hidden) renderLocCheck(); }, 30e3);
 })();

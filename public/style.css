@@ -518,3 +518,6 @@ html { transition: background-color .4s; }
 .otview .row2 { max-width: 640px; margin: 10px auto 30px; }
 .ot-ways h4 { margin: 10px 0 4px; font-size: 1rem; }
 .ot-sub { padding-left: 20px; margin: 4px 0; display: grid; gap: 4px; }
+.locrow { padding: 8px 0; border-top: 1px solid var(--line); }
+.locrow:first-of-type { border-top: 0; }
+.locrow ul { margin: 4px 0 0; padding-left: 22px; display: grid; gap: 3px; list-style: none; }

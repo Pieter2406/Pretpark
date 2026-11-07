@@ -244,6 +244,11 @@ async function otSetup(request, env, url, id) {
   if (!okFamily(id)) throw fail(400, 'bad family');
   const fam = await env.DB.prepare('SELECT id FROM families WHERE id = ?').bind(id).first();
   if (!fam) throw fail(404, 'no-family');
+  // GET ?all=1: every phone's OwnTracks link in this family, for the location check (never the tokens)
+  if (request.method === 'GET' && url.searchParams.get('all') === '1') {
+    const { results } = await env.DB.prepare('SELECT device, info, last, created FROM ot WHERE family = ?').bind(id).all();
+    return json({ links: results.map((r) => ({ device: r.device, info: JSON.parse(r.info || '{}'), last: r.last, created: r.created })) });
+  }
   let device = url.searchParams.get('device');
   if (request.method === 'POST') { try { device = (await request.json())?.device; } catch { throw fail(400, 'bad json'); } }
   if (!okDevice(device)) throw fail(400, 'bad device');

@@ -392,3 +392,14 @@ test('OwnTracks: a status message (no location) is remembered as contact', async
   const st = (await call('GET', `/api/otsetup/${f.id}?device=${dev}`)).data;
   assert.ok(st.info.contact > 0); assert.deepEqual(st.info.types, ['status']); assert.equal(st.info.t, undefined);
 });
+
+test('otsetup ?all=1: every phone of the family, never the token', async () => {
+  const f = await newFam(), g = await newFam();
+  await call('POST', `/api/otsetup/${f.id}`, { device: 'devotall0001' });
+  await call('POST', `/api/otsetup/${f.id}`, { device: 'devotall0002' });
+  await call('POST', `/api/otsetup/${g.id}`, { device: 'devotall0003' });
+  const r = await call('GET', `/api/otsetup/${f.id}?all=1`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.links.map((l) => l.device).sort(), ['devotall0001', 'devotall0002']);
+  assert.ok(!JSON.stringify(r.data).match(/"token"/));
+});
