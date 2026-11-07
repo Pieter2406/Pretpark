@@ -9,7 +9,7 @@ const LAZY = 'pretpark-lazy-940f4763f6';
 const VERSION = 'pretpark-69911be683a5';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
-  '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js', '/fun.js', '/activity.js', '/compat.js', '/shows.js',
+  '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js', '/fun.js', '/activity.js', '/compat.js', '/shows.js', '/wrapdata.js', '/wrapped.js',
 ];
 
 self.addEventListener('install', (e) => {

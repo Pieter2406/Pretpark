@@ -460,3 +460,23 @@ No accounts; knowing the family id is the access.
   Now `api()` retries a failed GET once after 1.5 s; `netFail()` shows the banner only after ≥ 2 failures over ≥ 8 s;
   `netOk()` (any working api call or photo upload) clears it at once and re-renders the banners/album.
   Test: scratchpad offline.js (blip → no banner, outage → banner, back → gone; Chromium + WebKit).
+
+## Wrapped of the day + photo book (branch `wrapped`, not deployed yet)
+- Research (7 Nov): a good "Wrapped" = short 9:16 story slides, one big number/punchline each, about *you*, each
+  slide shareable on its own; photo books mix hero / duo / trio / grid pages, polaroid (tilted, handwritten) and
+  magazine/minimal styles. iOS home-screen apps ignore `window.print()`, so the app builds the PDF itself.
+- `public/wrapdata.js` (pure, tests/wrapped.test.js): `dayData` (today's rides, distinct, toppers done of the COOL tier 1,
+  loved ride from ratings, most-ridden, queue minutes/longest/best guesser, quiz, photos, starred), `slidesFor` (only
+  slides with something to say: intro, rides, toppers, loved, queue, quiz, photos, timeline, outro), `bookPlan` (cover =
+  first starred photo; stats; photo pages = moments of ≤ 4 photos (same ride or < 20 min apart), a starred photo gets its
+  own page; timeline; end), `makePdf` (minimal PDF 1.4, one full-page DCTDecode JPEG per page; checked with pdfinfo and
+  pypdf strict).
+- `public/wrapped.js` (canvas): `drawSlide` (1080×1920, gradient per slide) and `drawPage` in 3 styles (klassiek / polaroid
+  with kraft paper, Caveat handwriting, washi tape / ibilaw dark with orange glow), sizes A4 landscape 2000×1414 or
+  square 1800×1800 (~170 dpi); text scales with the page. Originals are loaded one at a time and freed.
+- app.js: `openWrapped` (full-screen player: progress bars, tap left/right, 7 s per slide, "📤 Deel dit scherm" = PNG via
+  the share sheet, else a download), `openBook` (style + size, `makeBook` with progress and page previews, "📤 Deel /
+  bewaar de PDF"). Entry: Album row, the story header, and on Nu from 17:30 / after closing ("🎁 Jullie dag zit erop").
+  Fonts: Caveat added to the Google Fonts link. SW shell includes wrapdata.js / wrapped.js.
+- Test: scratchpad wrap.js (simulated day + 7 photos; all slides saved as PNG; book in 3 styles, each PDF through pdfinfo;
+  Chromium + WebKit).

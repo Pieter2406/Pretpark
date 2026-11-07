@@ -544,3 +544,34 @@ html { transition: background-color .4s; }
 
 /* typing: the bottom bar and the camera button step aside (iOS keeps fixed bars at the keyboard's edge otherwise) */
 body.kbd .tabs, body.kbd .fab { display: none; }
+
+/* Wrapped (🎁): full-screen stories drawn on a 1080×1920 canvas, scaled to fit */
+.wrap { position: fixed; inset: 0; z-index: 58; background: #000; display: grid; place-items: center; touch-action: manipulation; }
+.wrap canvas { width: min(100vw, calc(100dvh * 9 / 16)); width: min(100vw, calc(100vh * 9 / 16)); height: auto; max-height: 100vh; max-height: 100dvh; display: block; }
+.wr-bars { position: absolute; top: calc(env(safe-area-inset-top) + 8px); left: 10px; right: 10px; display: flex; gap: 4px; z-index: 2; }
+.wr-bars i { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,.35); overflow: hidden; }
+.wr-bars i b { display: block; height: 100%; width: 0; background: #fff; }
+.wr-bars i.done b { width: 100%; }
+.wr-bars i.on b { animation: wr-fill 7s linear forwards; }
+@keyframes wr-fill { to { width: 100%; } }
+.wr-zone { position: absolute; top: 12%; bottom: 14%; width: 38%; background: transparent; border: 0; z-index: 1; min-height: 0; }
+.wr-zone.prev { left: 0; } .wr-zone.next { right: 0; width: 62%; }
+.wr-top { position: absolute; top: calc(env(safe-area-inset-top) + 20px); right: 10px; z-index: 3; }
+.wr-top button { background: rgba(0,0,0,.35); color: #fff; border: 0; border-radius: 50%; width: 44px; height: 44px; }
+.wr-bottom { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 14px); left: 12px; right: 12px; display: flex; gap: 10px; z-index: 3; }
+.wr-bottom button { flex: 1; background: rgba(255,255,255,.92); color: #111; border: 0; min-height: 48px; border-radius: 24px; font-weight: 600; }
+.wrapbtn { margin: 10px 0; }
+.st-top { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+
+/* photo book (📕): style choice + page previews */
+.bookstyles { display: grid; gap: 8px; margin: 6px 0 12px; }
+.bstyle { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; padding: 12px; border-radius: 14px; border: 2px solid var(--line); cursor: pointer; }
+.bstyle input { grid-row: span 2; width: 22px; height: 22px; }
+.bstyle:has(input:checked) { border-color: var(--accent); }
+.bstyle.klassiek { background: #fbf8f2; color: #2b2622; }
+.bstyle.polaroid { background: #c9a679; color: #2b1d10; }
+.bstyle.polaroid b { font-family: Caveat, cursive; font-size: 1.4rem; }
+.bstyle.ibilaw { background: #120b1c; color: #f6eeff; }
+.bstyle.ibilaw b { color: #ff7a1a; }
+.bookprev { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 12px; }
+.bookprev img { width: 100%; border-radius: 6px; box-shadow: var(--shadow); }

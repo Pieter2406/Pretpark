@@ -515,6 +515,122 @@ function showGo(id) {
   closeSheet(); guideTap({ kind: 'show', id: 'show-' + s.id, name: s.name, icon: s.icon, lat: s.lat, lon: s.lon });
 }
 
+// ---------- Wrapped of the day (stories) + photo book (PDF): wrapdata.js (pure) + wrapped.js (canvas), loaded lazily
+// Evening card on Nu: from 17:30, or once the park is closed, when something happened today
+function wrapTime() {
+  const done = (S.fam?.log || []).some((l) => Date.now() - l.t < 14 * 3600e3);
+  if (!done) return false;
+  const d = new Date();
+  return d.getHours() * 60 + d.getMinutes() >= 17 * 60 + 30 || (S.live?.close && Date.now() > S.live.close);
+}
+const W = { i: 0, slides: [], d: null, timer: null, mod: null, data: null, busy: false };
+async function wrapMods() {
+  W.data ??= await import('./wrapdata.js'); W.mod ??= await import('./wrapped.js');
+  await W.mod.fontsReady();
+  return { data: W.data, mod: W.mod };
+}
+const wrapAssets = {
+  photo: (p) => keepUrls.get(p.id) || photoUrl(p.id, 'thumb'),
+  full: (p) => photoUrl(p.id, 'full'),
+  ridePhoto: (a) => (a ? photoSrc(a) : null),
+};
+const dayInput = () => ({ fam: S.fam, album: albumItems().filter((x) => !x.pending), people: people() });
+async function openWrapped() {
+  const { data } = await wrapMods();
+  W.d = data.dayData(dayInput()); W.slides = data.slidesFor(W.d); W.i = 0;
+  const el = document.getElementById('wrap');
+  el.innerHTML = `<div class="wr-bars">${W.slides.map(() => '<i><b></b></i>').join('')}</div>
+    <canvas id="wrCanvas" width="1080" height="1920" aria-label="Wrapped"></canvas>
+    <button class="wr-zone prev" data-go="wrapprev" aria-label="Vorige"></button><button class="wr-zone next" data-go="wrapnext" aria-label="Volgende"></button>
+    <div class="wr-top"><button data-go="wrapclose" aria-label="Sluiten">✕</button></div>
+    <div class="wr-bottom"><button data-go="wrapshare">📤 Deel dit scherm</button><button data-go="book">📕 Fotoboek</button></div>`;
+  el.hidden = false; openDialog(el);
+  wrapGo(0);
+}
+async function wrapGo(i) {
+  if (i < 0) i = 0;
+  if (i >= W.slides.length) { closeWrapped(); return; }
+  W.i = i; clearTimeout(W.timer);
+  const c = document.getElementById('wrCanvas'); if (!c) return;
+  W.busy = true;
+  await W.mod.drawSlide(c.getContext('2d'), W.slides[i], i, W.d, wrapAssets);
+  W.busy = false;
+  const el = document.getElementById('wrap');
+  if (W.i !== i || el.hidden) return;
+  el.querySelectorAll('.wr-bars i').forEach((b, k) => { b.className = k < i ? 'done' : k === i ? 'on' : ''; });
+  W.timer = setTimeout(() => wrapGo(W.i + 1), 7000);
+}
+function closeWrapped() {
+  clearTimeout(W.timer);
+  const el = document.getElementById('wrap'); if (el.hidden) return;
+  el.hidden = true; el.innerHTML = ''; closeDialog(el);
+}
+// share sheet when the phone has one (save to Photos / Files, print, send); otherwise a download
+async function shareFiles(files, title) {
+  clearTimeout(W.timer);
+  if (navigator.canShare?.({ files })) { try { await navigator.share({ files, title }); return; } catch (e) { if (e?.name === 'AbortError') return; } }
+  for (const f of files) {
+    const link = document.createElement('a'); link.href = URL.createObjectURL(f); link.download = f.name;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 60e3);
+  }
+}
+async function shareSlide() {
+  const c = document.getElementById('wrCanvas'); if (!c || W.busy) return;
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  await shareFiles([new File([blob], `walibi-wrapped-${W.i + 1}.png`, { type: 'image/png' })], 'Onze dag in Walibi');
+}
+// photo book: choose a style and size, build the pages one at a time (each original freed after drawing), preview, PDF
+const B = { style: store.get('bookStyle', 'polaroid'), size: store.get('bookSize', 'landscape'), pdf: null, busy: false };
+async function openBook() {
+  closeWrapped();
+  const { data } = await wrapMods();
+  const d = data.dayData(dayInput());
+  const pages = data.bookPlan(d);
+  openSheet(`<h2>📕 Ons fotoboek</h2>
+    <p class="small muted">${d.photos.length} foto’s · ${pages.length} pagina’s. Gesterde ⭐ foto’s krijgen een eigen pagina; de mooiste wordt de cover.</p>
+    <h3>Stijl</h3><div class="bookstyles">${data.BOOK_STYLES.map((s) => `<label class="bstyle ${s.id}"><input type="radio" name="bstyle" value="${s.id}" ${B.style === s.id ? 'checked' : ''}><b>${esc(s.name)}</b><span class="small">${esc(s.about)}</span></label>`).join('')}</div>
+    <h3>Formaat</h3><div class="seg">${Object.entries(data.BOOK_SIZES).map(([k, v]) => `<label class="segopt"><input type="radio" name="bsize" value="${k}" ${B.size === k ? 'checked' : ''}> <span>${esc(v.name)}</span></label>`).join('')}</div>
+    <p id="bookStatus" class="small" aria-live="polite"></p><div id="bookPrev" class="bookprev"></div>
+    <button class="primary big" data-go="bookmake" ${d.photos.length ? '' : 'disabled'}>📕 Maak het fotoboek</button>
+    <button data-go="bookshare" id="bookShare" hidden style="width:100%;margin-top:8px">📤 Deel / bewaar de PDF</button>
+    <p class="small muted">De PDF wordt op je gsm gemaakt met de originele foto’s (±170 dpi): bewaar hem in Bestanden of Boeken, druk af, of stuur hem naar een fotoboekdienst.</p>`);
+}
+async function makeBook() {
+  if (B.busy) return;
+  const st = document.querySelector('input[name=bstyle]:checked')?.value || 'polaroid';
+  const sz = document.querySelector('input[name=bsize]:checked')?.value || 'landscape';
+  B.style = st; B.size = sz; store.set('bookStyle', st); store.set('bookSize', sz);
+  const { data, mod } = await wrapMods();
+  const d = data.dayData(dayInput()), plan = data.bookPlan(d), size = data.BOOK_SIZES[sz];
+  B.busy = true; B.pdf = null;
+  const status = document.getElementById('bookStatus'), prev = document.getElementById('bookPrev');
+  if (prev) prev.innerHTML = '';
+  const pages = [];
+  try {
+    for (let k = 0; k < plan.length; k++) {
+      if (status) status.textContent = `⏳ Pagina ${k + 1} van ${plan.length}…`;
+      const c = document.createElement('canvas'); c.width = size.w; c.height = size.h;
+      await mod.drawPage(c.getContext('2d'), plan[k], d, { style: st, size: sz, n: k + 1, of: plan.length }, wrapAssets);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88));
+      pages.push({ jpeg: new Uint8Array(await blob.arrayBuffer()), w: size.w, h: size.h, pw: size.pw, ph: size.ph });
+      const t = document.createElement('canvas'); t.width = 240; t.height = Math.round(240 * size.h / size.w);
+      t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+      prev?.insertAdjacentHTML('beforeend', `<img src="${t.toDataURL('image/jpeg', 0.7)}" alt="Pagina ${k + 1}">`);
+      c.width = c.height = 0; // free the page's memory (iOS)
+    }
+    const bytes = data.makePdf(pages, 'Onze dag in Walibi');
+    B.pdf = new File([bytes], `walibi-fotoboek-${new Date(d.first || Date.now()).toISOString().slice(0, 10)}.pdf`, { type: 'application/pdf' });
+    if (status) status.textContent = `✅ Klaar: ${plan.length} pagina’s, ${(bytes.length / 1e6).toFixed(1).replace('.', ',')} MB.`;
+    const sh = document.getElementById('bookShare'); if (sh) sh.hidden = false;
+  } catch (e) {
+    diag('book', `${e?.name} ${e?.message}`);
+    if (status) status.textContent = 'Het fotoboek maken lukte niet. Probeer Vierkant of minder foto’s.';
+  }
+  B.busy = false;
+}
+async function shareBook() { if (B.pdf) await shareFiles([B.pdf], 'Ons fotoboek'); }
+
 // ---------- history (Nu › 📜 / Gezin): everything recorded today, newest first; a misclick can be deleted
 // (with "Terugzetten") or moved to the right time; a ride that wasn't tapped can be added afterwards
 const HIST = { ride: '🎢', ate: '🍽️', pause: '🪑', diaper: '🚼', car: '🚗' };
@@ -843,6 +959,7 @@ function renderNow() {
   }
   html += autoCard();
   html += showCard();
+  if (wrapTime()) html += '<button class="primary big wrapbtn" data-go="wrapped">🎁 Jullie dag zit erop: bekijk jullie Wrapped</button>';
   if (historyItems().length) html += '<button class="ghost small histbtn" data-go="history">📜 Geschiedenis · iets verkeerd getikt?</button>';
   if (!meId() && people().some((p) => p.kind === 'adult')) html += '<button class="ghost small whoami" data-go="onboard">🙋 Wie ben jij op deze gsm? Tik om te kiezen</button>';
   if (navigator.wakeLock && S.gps && !S.sim) html += '<button class="ghost small pocketbtn" data-go="pocket">🫥 Zakmodus: blijf volgen met de gsm in je zak <span class="muted">(±10% batterij/uur)</span></button>';
@@ -2264,6 +2381,7 @@ function renderAlbum() {
     ${S.queue.size && !S.upMsg ? `<p class="small upwait">⏳ ${S.offline ? 'Wacht op bereik.' : 'Houd Pretpark even open (in de app, scherm aan), dan gaan ze online.'} Ze staan veilig op deze gsm.</p>` : ''}
     ${unsaved().length && navigator.canShare ? `<button class="ghost small" data-go="savephotos" style="width:100%">💾 Bewaar ${Math.min(10, unsaved().length)} ${unsaved().length > 10 ? `van ${unsaved().length} ` : ''}foto’s ook in je Foto’s-app</button>` : ''}
     <div class="row2 tight"><button class="primary" data-go="story">📖 Ons dagverslag</button><button data-go="stickers">🏅 Stickers ${stickerCount()}/${ATTRACTIONS.length}</button></div>
+    <div class="row2 tight"><button data-go="wrapped">🎁 Onze dag: Wrapped</button><button data-go="book">📕 Fotoboek (PDF)</button></div>
     ${groups.map((g) => `<h3 class="ghead">${esc(g.k)}</h3><div class="grid">${g.items.map((it) => `
       <button class="ph" data-photo="${esc(it.id)}" aria-label="Foto ${hhmm(it.t)}${it.near ? ' bij ' + esc(it.near) : ''}">
         <img src="${esc(it.src)}" alt="" loading="lazy">${it.pending || it.origWait ? '<span class="badge">⏳</span>' : it.star ? '<span class="badge">⭐</span>' : ''}</button>`).join('')}</div>`).join('')
@@ -2314,7 +2432,7 @@ function openStory() {
   const fav = Object.entries(S.fam?.done || {}).sort((a, b) => b[1] - a[1])[0];
   const day = all.length ? new Date(all[0].t).toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
   const first = all[0]?.t, last = all.at(-1)?.t;
-  $('#story').innerHTML = `<div class="st-top"><button data-go="storyclose" aria-label="Sluiten">✕</button></div>
+  $('#story').innerHTML = `<div class="st-top"><button class="primary" data-go="wrapped">🎁 Wrapped</button><button data-go="book">📕 Fotoboek</button><button data-go="storyclose" aria-label="Sluiten">✕</button></div>
     <header class="st-head"><p class="kicker">Onze dag in Walibi</p><h2>${esc(day)}</h2>
       <div class="stats st-stats"><div class="stat"><b>${rides}</b><span>${rides === 1 ? 'ritje' : 'ritjes'}</span></div><div class="stat"><b>${items.length}</b><span>foto’s</span></div>
       <div class="stat"><b>${stickerCount()}</b><span>stickers</span></div>
@@ -2717,6 +2835,14 @@ document.addEventListener('click', async (e) => {
     case 'toilet': toiletGo(); break;
     case 'history': openHistory(); break;
     case 'shows': openShows(); break;
+    case 'wrapped': openWrapped(); break;
+    case 'book': openBook(); break;
+    case 'wrapclose': closeWrapped(); break;
+    case 'wrapshare': shareSlide(); break;
+    case 'wrapprev': wrapGo(W.i - 1); break;
+    case 'wrapnext': wrapGo(W.i + 1); break;
+    case 'bookmake': makeBook(); break;
+    case 'bookshare': shareBook(); break;
     case 'histadd': {
       const sel = $('#histRide'), tm = $('#histAddT');
       const when = timeToday(tm?.value);
