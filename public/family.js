@@ -210,6 +210,15 @@ export function apply(fam, act, now) {
       f.car = act.lat == null ? null : { lat: num(act.lat, -90, 90, 0), lon: num(act.lon, -180, 180, 0), t, note: str(act.note, 60) };
       break;
     case 'walk': f.walk = act.pref === 'low' ? 'low' : 'normal'; break;
+    // "this ride is closed" (rides without live data are assumed open): shared, for the rest of the day
+    case 'closed': {
+      if (!okRide(act.id)) throw new Error('bad id');
+      const c = { ...(f.closed || {}) };
+      if (act.on === false) delete c[act.id]; else c[act.id] = t;
+      for (const [k, v] of Object.entries(c)) if (t - v > 12 * 3600e3) delete c[k];
+      f.closed = c;
+      break;
+    }
     case 'ate': f.ate = Math.max(f.ate || 0, t); break;
     case 'pause': f.pause = Math.max(f.pause || 0, t); break;
     case 'pos':

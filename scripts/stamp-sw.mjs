@@ -15,7 +15,11 @@ const files = [];
 const h = createHash('sha256');
 for (const f of files) { h.update(f.slice(root.length)); h.update(readFileSync(f)); }
 const version = 'pretpark-' + h.digest('hex').slice(0, 12);
+// the lazily cached files get their own version, so the browser keeps them across app updates until they change
+const lh = createHash('sha256');
+for (const f of files.filter((f) => /\/(vendor|img)\//.test(f.slice(root.length - 1)))) { lh.update(f.slice(root.length)); lh.update(readFileSync(f)); }
+const lazy = 'pretpark-lazy-' + lh.digest('hex').slice(0, 10);
 const swPath = join(root, 'sw.js');
-const sw = readFileSync(swPath, 'utf8').replace(/const VERSION = '[^']*';/, `const VERSION = '${version}';`);
+const sw = readFileSync(swPath, 'utf8').replace(/const VERSION = '[^']*';/, `const VERSION = '${version}';`).replace(/const LAZY = '[^']*';/, `const LAZY = '${lazy}';`);
 writeFileSync(swPath, sw);
-console.log('sw.js VERSION =', version);
+console.log('sw.js VERSION =', version, 'LAZY =', lazy);

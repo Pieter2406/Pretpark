@@ -4,6 +4,8 @@
 // - Pages come from the cache too (instant start on weak park data); ?fresh=… forces the network, used to log in again.
 // - A new version installs in the background; the app shows "Nieuwe versie · Herladen".
 // - /api/* is never cached here: app.js keeps its own last copies (localStorage, IndexedDB).
+// LAZY: a hash of vendor/ + img/ (set by scripts/stamp-sw.mjs): a new pdf.js, reader or ride photo reaches every phone
+const LAZY = 'pretpark-lazy-0';
 const VERSION = 'pretpark-7a487107de52';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
@@ -22,7 +24,7 @@ self.addEventListener('install', (e) => {
   })());
 });
 self.addEventListener('activate', (e) => e.waitUntil((async () => {
-  for (const k of await caches.keys()) if (k !== VERSION && k !== 'pretpark-fonts' && k !== 'pretpark-lazy') await caches.delete(k);
+  for (const k of await caches.keys()) if (k !== VERSION && k !== 'pretpark-fonts' && k !== LAZY) await caches.delete(k);
   await self.clients.claim();
 })()));
 
@@ -53,7 +55,7 @@ self.addEventListener('fetch', (e) => {
   }
   // lazy files (ticket reader libraries, ride photos): cache after first use
   if (path.startsWith('/vendor/') || path.startsWith('/img/')) {
-    e.respondWith(caches.open('pretpark-lazy').then(async (c) => {
+    e.respondWith(caches.open(LAZY).then(async (c) => {
       const hit = await c.match(req); if (hit) return hit;
       const r = await fetch(req); if (okToCache(r)) c.put(req, r.clone()); return r;
     }));
@@ -74,7 +76,8 @@ self.addEventListener('notificationclick', (e) => {
   const url = new URL(e.notification.data?.url || '/', self.location.origin).href;
   e.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of all) { if ('focus' in c) { await c.focus(); if ('navigate' in c && url !== c.url) c.navigate(url).catch(() => {}); return; } }
+    // an open app is only focused and told what to show (no reload: that would lose what's on screen)
+    for (const c of all) { if ('focus' in c) { await c.focus(); c.postMessage({ type: 'open', url }); return; } }
     return self.clients.openWindow(url);
   })());
 });

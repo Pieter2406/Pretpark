@@ -1,7 +1,7 @@
 // Property tests: whatever the park looks like, a suggestion must never break the rules.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { plans, canRide, splitGroups, DEFAULT_PEOPLE, distM, byId } from '../public/logic.js';
+import { plans, canRide, splitGroups, DEFAULT_PEOPLE, distM, byId, parkIsOpen } from '../public/logic.js';
 import { ATTRACTIONS } from '../public/data.js';
 
 function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32); }
@@ -50,8 +50,10 @@ test('fuzz: 600 random situations, every suggestion follows the rules', () => {
         assert.ok(pt.group.some((id) => person(id).kind === 'adult'), 'every group has an adult');
         if (pt.rest) { assert.ok(pt.group.some((id) => person(id).pregnant), 'rest only for a pregnant adult'); continue; }
         const a = byId[pt.id];
-        assert.equal(ctx.live.rides[a.id]?.s, 'OPERATING', `${a.name} is open`);
-        if (ctx.minutesLeft != null) assert.ok(Math.max(1, Math.round(ctx.walk(a) / 60)) + (ctx.live.rides[a.id].w ?? 10) <= ctx.minutesLeft, 'fits before closing');
+        // open in the feed, or missing from it (no wait sensor) while the park is open
+        const r = ctx.live.rides[a.id];
+        assert.ok(r ? r.s === 'OPERATING' : parkIsOpen(ctx.live), `${a.name} is open`);
+        if (ctx.minutesLeft != null) assert.ok(Math.max(1, Math.round(ctx.walk(a) / 60)) + (r?.w ?? (a.cat === 'kids' ? 5 : 10)) <= ctx.minutesLeft, 'fits before closing');
         assert.ok(pt.ride.length > 0, 'someone rides');
         for (const id of pt.ride) {
           const p2 = person(id), c = canRide(p2, a);

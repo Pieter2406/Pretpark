@@ -60,11 +60,16 @@ async function getLive(ctx) {
   const hit = await cache.match(key);
   if (hit) return hit.json();
   const [live, sched, wx] = await Promise.all([
-    fetch(`https://api.themeparks.wiki/v1/entity/${DEST}/live`).then((r) => (r.ok ? r.json() : null)),
-    fetch(`https://api.themeparks.wiki/v1/entity/${DEST}/schedule`, { cf: { cacheTtl: 3600 } }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    getWeather(),
+    fetch(`https://api.themeparks.wiki/v1/entity/${DEST}/live`, { signal: AbortSignal.timeout(5000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    fetch(`https://api.themeparks.wiki/v1/entity/${DEST}/schedule`, { cf: { cacheTtl: 3600 }, signal: AbortSignal.timeout(4000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    // the weather is a nice-to-have: never let a slow MET Norway hold up the wait times
+    Promise.race([getWeather(), new Promise((r) => setTimeout(() => r(wxCache?.v ?? null), 3000))]),
   ]);
-  if (!live) throw fail(502, 'live data unavailable');
+  if (!live) {
+    // ThemeParks.wiki is down or slow: the last good copy (≤ 10 min old), marked stale, beats nothing
+    if (lastLive && Date.now() - lastLive.t < 10 * 60e3) return { ...lastLive, stale: true };
+    throw fail(502, 'live data unavailable');
+  }
   const rides = liveRides(live.liveData);
   const now = Date.now();
   const today = brusselsDate(now);
@@ -76,9 +81,11 @@ async function getLive(ctx) {
     localTime: brusselsLocal(now),
     weather: wx,
   };
+  lastLive = out;
   ctx?.waitUntil?.(cache.put(key, new Response(JSON.stringify(out), { headers: { 'cache-control': 'max-age=60' } })));
   return out;
 }
+let lastLive = null; // per isolate
 // Weather from MET Norway (free, asks for an identifying User-Agent). Kept 20 minutes in this isolate.
 let wxCache = null;
 async function getWeather() {
@@ -454,7 +461,8 @@ async function photos(request, env, email, fam, id, what) {
     const body = await request.json().catch(() => ({}));
     const row = await env.DB.prepare('SELECT meta FROM photos WHERE family = ? AND id = ?').bind(fam, id).first();
     if (!row) throw fail(404, 'no photo');
-    const meta = { ...JSON.parse(row.meta), caption: String(body.caption ?? '').slice(0, 200), star: !!body.star };
+    // only the fields sent: one phone starring while the other writes a caption doesn't wipe either change
+    const meta = { ...JSON.parse(row.meta), ...('caption' in body ? { caption: String(body.caption ?? '').slice(0, 200) } : {}), ...('star' in body ? { star: !!body.star } : {}) };
     await env.DB.prepare('UPDATE photos SET meta = ? WHERE family = ? AND id = ?').bind(JSON.stringify(meta), fam, id).run();
     return json({ ok: true, meta });
   }

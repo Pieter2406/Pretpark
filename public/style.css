@@ -200,7 +200,7 @@ label.tog input { width: 22px; height: 22px; accent-color: var(--accent); }
 .seg button[aria-pressed="true"] { background: var(--sun); color: var(--sun-ink); border-color: var(--sun); font-weight: 700; }
 .steps { margin: 6px 0 0; padding-left: 20px; } .steps li { margin: 4px 0; }
 
-.toast { position: fixed; left: 50%; top: calc(64px + env(safe-area-inset-top)); bottom: auto; transform: translate(-50%, -20px); display: flex; gap: 10px; align-items: center; opacity: 0; z-index: 40;
+.toast { position: fixed; left: 50%; top: calc(64px + env(safe-area-inset-top)); bottom: auto; transform: translate(-50%, -20px); display: flex; gap: 10px; align-items: center; opacity: 0; z-index: 70;
   background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 999px; font-weight: 600; transition: .25s; pointer-events: none; box-shadow: var(--shadow); max-width: calc(100% - 32px); text-align: center; }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 .empty { text-align: center; padding: 30px 10px; color: var(--muted); }
@@ -522,3 +522,7 @@ html { transition: background-color .4s; }
 .locrow:first-of-type { border-top: 0; }
 .locrow ul { margin: 4px 0 0; padding-left: 22px; display: grid; gap: 3px; list-style: none; }
 .upwait { margin: 4px 0 8px; padding: 8px 12px; border-radius: 12px; background: var(--mid-bg); }
+
+/* the guide on short screens (375×667, Safari with bars): scroll instead of hiding Stop/Gedaan */
+.guide { overflow-y: auto; }
+@media (max-height: 720px) { .guide .mapwrap { min-height: 140px; } }

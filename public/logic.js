@@ -73,11 +73,22 @@ export function splitGroups(people) {
 
 // ---------- live data helpers
 // live = { rides: { [id]: { s: 'OPERATING'|'CLOSED'|'DOWN'|'REFURBISHMENT', w: minutes|null } } }
+// ThemeParks.wiki only reports rides with a wait sensor (16 of Walibi's 41: none of the kids rides). A ride that is
+// missing is assumed open while the park is (wait unknown), so the toddler's rides can be suggested at all; the family
+// can mark one closed in the app (fam.closed → ctx.closed).
+export function parkIsOpen(live) {
+  if (!live?.rides) return false;
+  const t = live.t || Date.now();
+  if (live.open && live.close) return t >= live.open && t < live.close;
+  return Object.values(live.rides).some((r) => r.s === 'OPERATING');
+}
 export function status(live, id) {
   const r = live?.rides?.[id];
-  if (!r) return { open: false, wait: null, known: false, s: 'UNKNOWN' };
+  if (!r) return parkIsOpen(live) ? { open: true, wait: null, known: false, s: 'ASSUMED', assumed: true } : { open: false, wait: null, known: false, s: 'UNKNOWN' };
   return { open: r.s === 'OPERATING', wait: r.w ?? null, known: true, s: r.s };
 }
+// a ride the family marked closed (today: within 12 h)
+export const markedClosed = (closed, id, now = Date.now()) => !!closed?.[id] && now - closed[id] < 12 * 3600e3;
 
 // ---------- weather (MET Norway, in live.weather: { now: {t, mm, p, sym}, hours: [{h, t, mm, p, sym}] })
 export function raining(live) {
@@ -161,7 +172,7 @@ export const WALK_WEIGHT = { normal: { heavy: 2, light: 1.2 }, low: { heavy: 6, 
 // ctx = { people, favs:[id], done:{id:n}, rates:{id:{person:1-3}}, waitFactor, live, walk:(attraction)=>meters, minutesLeft, month, rain, walkPref }
 function scoreOne(group, a, ctx, extraWalkM = 0) {
   const st = status(ctx.live, a.id);
-  if (!st.open) return null;
+  if (!st.open || markedClosed(ctx.closed, a.id, ctx.now)) return null;
   const { ride, watch, escorted } = riders(group, a);
   if (!ride.length) return null;
   // people who only watch cost something: a bored toddler more than an adult on a bench
@@ -172,7 +183,7 @@ function scoreOne(group, a, ctx, extraWalkM = 0) {
   if (ctx.rain) value *= a.indoor ? 1.6 : a.wet ? 0.5 : 0.85; // raining now: prefer indoor rides
   if (value <= 0.2) return null;
   const walkM = ctx.walk(a) + extraWalkM;
-  const wait = st.wait ?? 10;
+  const wait = st.wait ?? (a.cat === 'kids' ? 5 : 10); // unknown: small rides rarely have a long queue
   // a minute walking costs more than a minute in the queue for a pregnant adult or a toddler (tired legs, buggy),
   // tuned with sim/simulate.mjs; walk is also slower with a pregnant adult
   const ww = WALK_WEIGHT[ctx.walkPref] || WALK_WEIGHT.normal;
@@ -274,7 +285,7 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   const fresh = pos && now - pos.t < 45 * 60e3;
   const here = fresh ? pos : null;
   const walk = (x) => (here ? distM(here, x) * PATH_FACTOR : 400);
-  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, rates: fam.rates || {}, waitFactor: waitFactor(fam.waits, now), live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk, clock: parkClock(live) };
+  const ctx = { people, favs: fam.favs || [], done: fam.done || {}, rates: fam.rates || {}, waitFactor: waitFactor(fam.waits, now), closed: fam.closed || {}, now, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk, clock: parkClock(live) };
   const since = (k) => now - (memo.sent[k] || 0);
   const quiet = since('any') < 8 * 60e3;
   const nm = (id) => byId[id]?.name || 'attractie';
@@ -285,7 +296,10 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
     for (const part of target.plan.parts) {
       if (!part.id) continue;
       const st = status(live, part.id);
-      if (st.s === 'DOWN' && memo.down !== target.setAt + part.id) {
+      if (st.s === 'OPERATING') memo.op = { ...(memo.op || {}), [part.id]: now };
+      // a breakdown: DOWN, or CLOSED shortly after it was running (Walibi's feed sometimes says CLOSED), not near closing
+      const stopped = st.s === 'DOWN' || (st.s === 'CLOSED' && now - (memo.op?.[part.id] || 0) < 30 * 60e3 && (!live.close || now < live.close - 30 * 60e3));
+      if (stopped && memo.down !== target.setAt + part.id) {
         const alt = plans(ctx)[0];
         memo.down = target.setAt + part.id;
         notes.push({ tag: 'down', title: `⚠️ ${nm(part.id)} ligt stil`, body: alt ? `Nieuw voorstel: ${describe(alt, people)}` : 'Open de app voor een nieuw voorstel.', url: '/' });
@@ -319,7 +333,8 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   const date = new Date(now);
   const local = live.localTime ? new Date(live.localTime) : date;
   // 3. time to eat
-  if (!notes.length && prefs.food !== false && !quiet && isMealTime(local) && now - (fam.ate || 0) > 3 * 3600e3) {
+  const timeLeft = live.minutesLeft == null || live.minutesLeft > 45; // no meal/rest tips while the park is closing
+  if (!notes.length && prefs.food !== false && !quiet && timeLeft && isMealTime(local) && now - (fam.ate || 0) > 3 * 3600e3) {
     const slot = local.getHours() < 15 ? 'lunch' : 'diner';
     if (memo.food !== slot + local.toDateString()) {
       memo.food = slot + local.toDateString();
@@ -328,9 +343,11 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
     }
   }
   // 4. rest for the pregnant adult
-  if (!notes.length && prefs.food !== false && !quiet && people.some((p) => p.pregnant)) {
-    // counted from the last meal/pause, or from opening time (no reminder right after arriving)
-    const lastRest = Math.max(fam.ate || 0, fam.pause || 0, fam.created || 0, live.open || 0);
+  if (!notes.length && prefs.food !== false && !quiet && timeLeft && people.some((p) => p.pregnant)) {
+    // counted from the last meal/pause, or from opening time (no reminder right after arriving); without a schedule
+    // from the first ride done today, else not at all
+    const start = live.open || fam.log?.find((l) => now - l.t < 14 * 3600e3)?.t || now;
+    const lastRest = Math.max(fam.ate || 0, fam.pause || 0, start);
     if (now - lastRest > 100 * 60e3 && since('pause') > 100 * 60e3) {
       memo.sent.pause = now;
       const f = foodOptions(walk).find((o) => o.f.seat);
@@ -342,9 +359,11 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
     const targetAge = target?.setAt ? now - target.setAt : Infinity;
     // standing in line (also old clients' target.queued): no "better idea"
     const inQueue = Object.values(target?.q || {}).some((q) => now - q.t < 90 * 60e3) || (!target?.q && now - (target?.queued || 0) < 90 * 60e3);
-    if (targetAge > 30 * 60e3 && !inQueue) {
+    const justDone = now - (fam.log?.at(-1)?.t || 0) < 10 * 60e3; // they just finished: the app shows the next step
+    if (targetAge > 30 * 60e3 && !inQueue && !justDone) {
       const best = plans(ctx)[0];
-      if (best && best.key !== memo.bestKey && best.parts[0].wait <= 15) {
+      // only a real, short, known wait, and not the plan they already chose
+      if (best && best.key !== memo.bestKey && best.key !== target?.plan?.key && best.parts[0].waitKnown && best.parts[0].wait <= 15) {
         memo.bestKey = best.key; memo.sent.best = now;
         notes.push({ tag: 'best', title: '👉 Nu ideaal', body: describe(best, people), url: '/' });
       }
@@ -356,7 +375,7 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
 
 export function describe(plan, people) {
   const name = (id) => people.find((p) => p.id === id)?.name || '';
-  const part = (pt) => pt.rest ? 'even rusten in de buurt' : `${byId[pt.id].name} (${pt.wait} min wachten)`;
+  const part = (pt) => pt.rest ? 'even rusten in de buurt' : `${byId[pt.id].name} (${pt.waitKnown ? `${pt.wait} min wachten` : 'wachttijd onbekend'})`;
   if (plan.type === 'together') return `Iedereen → ${part(plan.parts[0])}`;
   return plan.parts.map((pt) => `${pt.group.map(name).join(' + ')} → ${part(pt)}`).join(' · ');
 }

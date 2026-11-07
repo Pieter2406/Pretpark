@@ -322,3 +322,12 @@ test('queue: only the detection marks a queue as automatic', () => {
   g = apply(g, { type: 'queue', wait: 10, auto: 'yes' }, NOW - 10 * 60e3);
   assert.equal(g.target.q[0].auto, undefined);
 });
+
+test('closed: mark and unmark a ride for today', () => {
+  const k = find('Kondaa').id;
+  let f = apply(newFamily(NOW), { type: 'closed', id: k, on: true }, NOW);
+  assert.equal(f.closed[k], NOW);
+  f = apply(f, { type: 'closed', id: k, on: false }, NOW + 1000);
+  assert.equal(f.closed[k], undefined);
+  assert.throws(() => apply(f, { type: 'closed', id: 'nope' }, NOW), /bad id/);
+});

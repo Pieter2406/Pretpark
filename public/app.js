@@ -2,7 +2,7 @@
 // (family.js actions, versioned by `updated`); wait times come from /api/live; walking routes from route.js.
 import './compat.js'; // first: fallbacks for older iPhones
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
-import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor } from './logic.js';
+import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor, markedClosed } from './logic.js';
 import { QUESTS, FACTS } from './fun.js';
 import { freshTracker, addFix, detect, farState } from './activity.js';
 import { makePark, pathLength, bearingXY } from './route.js';
@@ -93,12 +93,23 @@ function takeFam(r) {
 // Change the shared family state. Every action carries an id (the server ignores repeats) and the time it happened.
 // Offline: apply it here with the same rules as the server and send it later.
 async function act(a, quiet = false) {
-  a = { ...a, aid: a.aid || rnd(10), at: a.at || Date.now() };
+  a = { ...a, ...(a.type === 'pos' ? {} : { aid: a.aid || rnd(10) }), at: a.at || Date.now() };
+  // older actions still waiting: this one goes behind them (a late replay must never overtake a newer action)
+  if (a.type !== 'pos' && S.outbox.length) {
+    try { S.fam = apply(S.fam, a, a.at); } catch { return false; }
+    S.outbox.push(a); store.set('outbox', S.outbox); saveFam();
+    recompute(); if (!quiet) render();
+    flushOutbox();
+    return true;
+  }
+  if (a.type !== 'pos') store.set('inflight', a); // survives the page being killed mid-request
   try {
     const r = await api('/api/family/' + S.famId, { method: 'POST', body: a });
+    if (a.type !== 'pos') store.set('inflight', null);
     takeFam(r); recompute(); if (!quiet) render();
     return true;
   } catch (e) {
+    if (a.type !== 'pos') store.set('inflight', null);
     if (e.offline && a.type !== 'pos') {
       try { S.fam = apply(S.fam, a, a.at); } catch { return false; }
       S.outbox.push(a); store.set('outbox', S.outbox); saveFam();
@@ -428,7 +439,7 @@ function recompute() {
 function planCtx() {
   const minutesLeft = S.live?.close ? Math.round((S.live.close - Date.now()) / 60e3) : null;
   return {
-    people: people(), favs: S.fam.favs || [], done: S.fam.done || {}, rates: S.fam.rates || {}, waitFactor: waitFactor(S.fam.waits), live: S.live,
+    people: people(), favs: S.fam.favs || [], done: S.fam.done || {}, rates: S.fam.rates || {}, waitFactor: waitFactor(S.fam.waits), closed: S.fam.closed || {}, now: Date.now(), live: S.live,
     month: new Date().getMonth(), minutesLeft: minutesLeft != null && minutesLeft > 0 ? minutesLeft : null, rain: raining(S.live), walkPref: S.fam.walk,
     clock: S.live?.close ? { now: new Date().getHours() * 60 + new Date().getMinutes(), close: new Date().getHours() * 60 + new Date().getMinutes() + minutesLeft } : null,
   };
@@ -446,7 +457,8 @@ function restSpot(near) {
 // ---------- small render helpers
 function waitBadge(id) {
   const st = status(S.live, id);
-  if (!st.known) return '<span class="wait w-off">geen info</span>';
+  if (markedClosed(S.fam?.closed, id)) return '<span class="wait w-off">dicht (gemeld)</span>';
+  if (!st.known) return `<span class="wait w-off">${st.assumed ? '? min' : 'geen info'}</span>`;
   if (!st.open) return `<span class="wait w-off">${st.s === 'DOWN' ? 'storing' : 'dicht'}</span>`;
   if (st.wait == null) return '<span class="wait w-off">open</span>';
   const w = num(st.wait);
@@ -468,7 +480,7 @@ function notesFor(part) {
   if (a.wet) out.push(['💧', 'Je kan nat worden']);
   if (a.indoor) out.push(['🏠', 'Binnen']);
   if (trend(a.id) === -1) out.push(['↘', 'De rij wordt korter']);
-  if (part.waitKnown === false) out.push(['❔', 'Wachttijd niet bekend']);
+  if (part.waitKnown === false) out.push(['❔', status(S.live, a.id).assumed ? 'Geen live info van Walibi. Dicht? Tik op de attractie › “Is dicht”' : 'Wachttijd niet bekend']);
   return out;
 }
 const notesHtml = (n) => (n.length ? `<ul class="notes">${n.map(([i, t]) => `<li><span aria-hidden="true">${i}</span><span>${t}</span></li>`).join('')}</ul>` : '');
@@ -1039,11 +1051,18 @@ function lockPage(on) {
     b.classList.remove('locked'); b.style.top = ''; scrollTo(0, lockedY);
   }
 }
+// Closing a dialog with a button drops its history entry with history.back(), a little later: when another dialog
+// opens in the meantime (sheet → "Breng me erheen" → guide) it takes over that entry instead (replaceState), because
+// a back() that lands after the new pushState would pop the new dialog's entry and leave the app on "back".
+let pendingBack = null;
 function openDialog(el) {
   if (dialogStack.some((d) => d.el === el)) return; // already open (e.g. the next onboarding step): no second entry
   dialogStack.push({ el, back: document.activeElement });
   lockPage(true);
-  try { history.pushState({ pp: el.id }, ''); } catch { /* ignore */ }
+  try {
+    if (pendingBack) { clearTimeout(pendingBack); pendingBack = null; history.replaceState({ pp: el.id }, ''); }
+    else history.pushState({ pp: el.id }, '');
+  } catch { /* ignore */ }
   if (finePointer) setTimeout(() => el.querySelector('button, [href], input, select, [tabindex="0"]')?.focus(), 30);
 }
 function closeDialog(el) {
@@ -1053,7 +1072,10 @@ function closeDialog(el) {
   if (!dialogStack.length) lockPage(false);
   if (finePointer) d.back?.focus?.();
   // closed with a button or a swipe: drop our history entry too, so "back" later doesn't do nothing
-  if (!d.noHistory && history.state?.pp === el.id) { skipPops++; history.back(); }
+  if (!d.noHistory && history.state?.pp === el.id) {
+    clearTimeout(pendingBack);
+    pendingBack = setTimeout(() => { pendingBack = null; if (history.state?.pp === el.id && !dialogStack.some((x) => x.el === el)) { skipPops++; history.back(); } }, 450);
+  }
 }
 const closers = {
   sheet: () => closeSheet(), guide: () => closeGuide(), tview: () => closeViewer(), pview: () => closePhoto(),
@@ -1070,6 +1092,7 @@ const closers = {
   if (matchMedia('(pointer: fine)').matches) pk?.addEventListener('dblclick', closePocket); // mouse only: two taps through fabric must not open
 }
 addEventListener('pagehide', () => store.set('tracker', S.tr));
+document.addEventListener('input', (e) => { if (e.target.closest?.('#peopleForm')) S.famDirty = true; }, true);
 // a photo only in memory (this browser can't store it) would be lost when the page closes: ask first
 addEventListener('beforeunload', (e) => { if (S.mem.length) { e.preventDefault(); e.returnValue = ''; } });
 setInterval(() => { if (S.pocket) renderPocket(); }, 30e3);
@@ -1171,7 +1194,9 @@ function rideSheet(id) {
     <ul class="notes" style="margin-top:12px">${people().map((p) => `<li><span aria-hidden="true">${emoji(p)}</span><span><b>${esc(p.name)}</b> (${num(p.height)} cm): ${rule(p)}</span></li>`).join('')}</ul>
     ${a.wet ? '<p class="small">💧 Je kan nat worden.</p>' : ''}
     <p class="muted small">Min. ${a.alone ?? '–'} cm alleen${a.withAdult ? `, ${a.withAdult} cm met volwassene` : ''}${a.max ? `, max. ${a.max} cm` : ''}. Check het bordje aan de ingang.</p>
-    <button class="primary big" data-goride="${a.id}" ${st.known && !st.open ? 'disabled' : ''}>🧭 Breng me erheen</button>
+    ${st.assumed ? '<p class="small muted">Walibi geeft voor deze attractie geen live wachttijd door: ze telt als open zolang het park open is.</p>' : ''}
+    <button class="primary big" data-goride="${a.id}" ${(st.known && !st.open) || markedClosed(S.fam.closed, a.id) ? 'disabled' : ''}>🧭 Breng me erheen</button>
+    <button class="ghost small" data-closed="${a.id}" style="width:100%">${markedClosed(S.fam.closed, a.id) ? '✅ Toch open: weer voorstellen' : '🚫 Is dicht: niet meer voorstellen vandaag'}</button>
     <div class="row2"><button data-fav="${a.id}" aria-pressed="${favs.includes(a.id)}">${favs.includes(a.id) ? '★ Favoriet' : '☆ Favoriet'}</button>
       <button data-doneone="${a.id}">✓ Gedaan${S.fam.done?.[a.id] ? ` (${S.fam.done[a.id]}×)` : ''}</button></div>`);
 }
@@ -1240,9 +1265,11 @@ function queueCard() {
   const { a, q, t } = Q;
   const split = t.plan.type === 'split';
   const meet = split ? byId[t.plan.meet] : null;
-  const tail = `${meet ? `<div class="meet">📍 Daarna afspreken aan de uitgang van <b>${esc(meet.name)}</b></div>` : ''}
+  const meetLine = meet ? `<div class="meet">📍 Daarna afspreken aan de uitgang van <b>${esc(meet.name)}</b></div>` : '';
+  const readyBtn = split && !t.ready?.[Q.i] ? '<div class="row1"><button data-go="ready">✅ Wij zijn klaar</button></div>' : '';
+  const tail = `${meetLine}
     <div class="row2"><button data-go="done">✓ Gedaan</button><button data-go="untarget">✕ Iets anders</button></div>
-    ${split && !t.ready?.[Q.i] ? '<div class="row1"><button data-go="ready">✅ Wij zijn klaar</button></div>' : ''}`;
+    ${readyBtn}`;
   if (q.b) {
     const m = Math.max(1, Math.round((q.b - q.t) / 60e3));
     const win = guessWinner(q.g, realWait(q));
@@ -1252,7 +1279,7 @@ function queueCard() {
       <h2>${icon(a)} ${esc(a.name)}: veel plezier!</h2>
       <p>Jullie stonden <b>${m} min</b> in de rij${q.w != null ? ` (aangekondigd: ${num(q.w)} min)` : ''}.${win ? `<br>🏆 <b>${esc(person(win[0])?.name || '')}</b> zat er het dichtst bij met ${num(win[1])} min!` : ''}</p>
       ${mineReady ? `<p class="small">✅ De anderen weten dat jullie klaar zijn. Tik op Gedaan als jullie weer samen zijn.</p><button class="primary big" data-go="done">✓ Iedereen terug: Gedaan</button>`
-        : `<button class="primary big" data-go="done">✓ ${split && others && !others.rest ? 'We zijn eraf' : 'Gedaan: we zijn eraf'}</button>`}${tail.replace(/<div class="row2">.*<\/div>/s, '')}</section>`;
+        : `<button class="primary big" data-go="done">✓ ${split && others && !others.rest ? 'We zijn eraf' : 'Gedaan: we zijn eraf'}</button>`}${meetLine}${readyBtn}</section>`;
   }
   const L = queueLeft(Q);
   const now = status(S.live, a.id).wait;
@@ -1462,7 +1489,7 @@ async function otStatus(create) {
   if (!S.famId) return;
   try {
     let st = await api(`/api/otsetup/${S.famId}?device=${device}`);
-    if (!st.active && create && meId()) st = await api(`/api/otsetup/${S.famId}`, { method: 'POST', body: { device } }); // a link to tap right away
+    if (!st.active && meId() && (create || !S.ot.stopped)) st = await api(`/api/otsetup/${S.famId}`, { method: 'POST', body: { device } }); // a link to tap right away
     const relink = st?.token !== S.ot.st?.token;
     S.ot.st = st; store.set('otActive', !!st.active && !!st.info?.t);
     // a poll only refreshes the status line (an open "Zelf instellen" or a selection stays as it is)
@@ -1628,7 +1655,11 @@ async function syncTickets() {
       await idb.put('tickets', t);
     }
     try {
-      const remote = await api(`/api/tickets/${S.famId}`, { timeout: 20000 });
+      // deletes that didn't reach the server yet go first, and a deleted ticket is never written back
+      const gone = store.get('tgone', []);
+      for (const id of gone) { try { await api(`/api/tickets/${S.famId}/${id}`, { method: 'DELETE' }); store.set('tgone', store.get('tgone', []).filter((x) => x !== id)); } catch (e) { if (e.offline) throw e; } }
+      const still = new Set(store.get('tgone', []));
+      const remote = (await api(`/api/tickets/${S.famId}`, { timeout: 20000 })).filter((t) => !still.has(t.id));
       const ids = new Set(remote.map((t) => t.id));
       for (const t of local) if (!ids.has(t.id) && !t.pending) await idb.del('tickets', t.id);
       for (const t of remote) await idb.put('tickets', t);
@@ -1995,7 +2026,7 @@ async function loadChat() {
   if (!S.famId) return;
   try {
     const last = S.chat.at(-1)?.t || 0;
-    const fresh = await api(`/api/chat/${S.famId}${last ? `?after=${last}` : ''}`);
+    const fresh = await api(`/api/chat/${S.famId}${last ? `?after=${last - 60e3}` : ''}`);
     if (fresh.length) {
       const ids = new Set(S.chat.map((m) => m.id));
       const before = unread();
@@ -2006,15 +2037,21 @@ async function loadChat() {
     }
   } catch { /* next time */ }
 }
+let chatSending = false;
 async function flushChat() {
-  while (S.chatQ.length && S.famId) {
-    try {
-      const m = await api(`/api/chat/${S.famId}`, { method: 'POST', body: S.chatQ[0] });
-      S.chat = [...S.chat.filter((x) => x.id !== m.id), m].sort((a, b) => a.t - b.t);
-      cached.save('chat', S.chat);
-    } catch (e) { if (e.status !== 400) break; } // keep it for later, unless the server says it's invalid
-    S.chatQ.shift(); store.set('chatq', S.chatQ);
-  }
+  if (chatSending) return; // one sender: two at once would send one message twice and drop the next
+  chatSending = true;
+  try {
+    while (S.chatQ.length && S.famId) {
+      const msg = S.chatQ[0];
+      try {
+        const m = await api(`/api/chat/${S.famId}`, { method: 'POST', body: msg });
+        S.chat = [...S.chat.filter((x) => x.id !== m.id), m].sort((a, b) => a.t - b.t);
+        cached.save('chat', S.chat);
+      } catch (e) { if (e.status !== 400) break; } // keep it for later, unless the server says it's invalid
+      S.chatQ = S.chatQ.filter((x) => x.id !== msg.id); store.set('chatq', S.chatQ);
+    }
+  } finally { chatSending = false; }
   if (S.chatOpen) renderChat();
 }
 function sendChat(body) {
@@ -2140,7 +2177,7 @@ function renderBanners() {
   if (S.offline) b.push(['offline', '📶', `<b>Geen bereik.</b> Ik werk verder met de laatste gegevens${S.live?.t ? ` (wachttijden van ${hhmm(S.live.t)})` : ''}.${S.outbox.length ? ` ${S.outbox.length} wijziging(en) wachten.` : ''}`]);
   if (!S.manual && S.sim === 'far') b.push(['far', '📍', '<b>Je bent niet in Walibi.</b> Ik reken vanaf de ingang.']);
   if (!S.manual && S.sim === 'off') b.push(['off', '📍', '<b>Locatie staat uit.</b> Ik reken vanaf de ingang. Zet locatie aan voor de wandelgids.']);
-  if (!S.manual && S.sim !== 'off' && Date.now() - S.tr.approx < 5 * 60e3 && (!S.gps || Date.now() - S.gpsAt > 2 * 60e3)) b.push(['approx', '📍', `<b>Locatie is maar “ongeveer”.</b> Zet <b>Exacte locatie</b> aan: ${/iPhone|iPad/.test(navigator.userAgent) ? 'Instellingen › Privacy › Locatievoorzieningen › Safari-websites' : 'Instellingen › Apps › Chrome › Rechten › Locatie'}.`]);
+  if (!S.manual && S.sim !== 'off' && Date.now() - S.tr.approx < 5 * 60e3 && (!S.gps || Date.now() - S.gpsAt > 2 * 60e3)) b.push(['approx', '📍', `<b>Locatie is maar “ongeveer”.</b> Zet <b>Exacte locatie</b> aan: ${/iPhone|iPad/.test(navigator.userAgent) ? 'Instellingen › Privacy en beveiliging › Locatievoorzieningen › Safari-websites › Exacte locatie' : 'Instellingen › Apps › Chrome › Rechten › Locatie'}.`]);
   if (S.manual) b.push(['manual', '📍', 'Je hebt je positie zelf gekozen op de kaart.']);
   const L = S.live;
   if (L?.open && Date.now() < L.open) b.push(['before', '🕙', `Walibi opent om <b>${hhmm(L.open)}</b>.`]);
@@ -2198,12 +2235,13 @@ function render() {
   if (S.tab === 'now') renderNow();
   if (S.tab === 'map') renderMapView();
   if (S.tab === 'album') renderAlbum();
-  if (S.tab === 'fam' && !document.activeElement?.closest('#view-fam form, #view-fam input')) renderFam();
+  if (S.tab === 'fam') { if (S.famDirty || document.activeElement?.closest('#view-fam form, #view-fam input, #view-fam details[open]')) renderLocCheck(); else renderFam(); }
   if (S.guide) updateGuide();
 }
 
 let toastTimer;
 function toast(t, action, ms = 2600) {
+  if (S.pocket) return; // the black pocket screen shows nothing that a tap through the fabric could hit
   const el = $('#toast');
   el.innerHTML = `<span>${esc(t)}</span>${action ? `<button data-go="toastaction">${esc(action.label)}</button>` : ''}`;
   el.classList.add('on'); el.classList.toggle('act', !!action);
@@ -2217,7 +2255,7 @@ document.addEventListener('click', async (e) => {
   const t = e.target.closest('button, [data-ride], [data-food], [data-wc]');
   if (!t || t.disabled) return;
   const d = t.dataset;
-  if (d.tab) { S.tab = d.tab; buzz(); closeSheet(); render(); scrollTo(0, 0); return; }
+  if (d.tab) { S.tab = d.tab; S.famDirty = false; buzz(); closeSheet(); render(); scrollTo(0, 0); return; }
   if (d.mapmode) { S.mapMode = d.mapmode; renderMapView(); return; }
   if (d.tview) { openViewer(+d.tview); return; }
   if (d.quick) { sendChat({ kind: 'text', text: d.quick }); return; }
@@ -2225,7 +2263,11 @@ document.addEventListener('click', async (e) => {
   if (d.photo) { openPhoto(d.photo); return; }
   if (d.tdel) {
     const id = d.tdel;
-    deleteLater('t:' + id, 'Ticket', async () => { await idb.del('tickets', id); api(`/api/tickets/${S.famId}/${id}`, { method: 'DELETE' }).catch(() => {}); S.tickets = S.tickets.filter((x) => x.id !== id); renderTickets(); });
+    deleteLater('t:' + id, 'Ticket', async () => {
+      store.set('tgone', [...new Set([...store.get('tgone', []), id])]);
+      await idb.del('tickets', id); S.tickets = S.tickets.filter((x) => x.id !== id); renderTickets();
+      api(`/api/tickets/${S.famId}/${id}`, { method: 'DELETE' }).then(() => store.set('tgone', store.get('tgone', []).filter((x) => x !== id))).catch(() => {});
+    });
     renderTickets();
     return;
   }
@@ -2252,6 +2294,11 @@ document.addEventListener('click', async (e) => {
     t.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
     act({ type: 'rate', id, person: pid, v: +v }, true);
     return;
+  }
+  if (d.closed) {
+    const on = !markedClosed(S.fam.closed, d.closed);
+    await act({ type: 'closed', id: d.closed, on });
+    toast(on ? '🚫 Gemeld: ik stel deze attractie vandaag niet meer voor' : '✅ Weer open'); rideSheet(d.closed); return;
   }
   if (d.doneone) { closeSheet(); if (S.guide) closeGuide(); await act({ type: 'done', ids: [d.doneone] }); celebrate(); photoMoment([d.doneone]); return; }
   if (d.dismiss) { S.dismissed[d.dismiss] = 1; store.set('dismissed', S.dismissed); renderBanners(); return; }
@@ -2280,8 +2327,8 @@ document.addEventListener('click', async (e) => {
     case 'ot': openOt(); break;
     case 'otclose': closeOt(); break;
     case 'otcopy': { const u = S.ot?.st?.token ? otUrl(S.ot.st.token) : ''; try { await navigator.clipboard.writeText(u); toast('Link gekopieerd'); } catch { toast('Kopiëren lukte niet: houd de link ingedrukt'); } break; }
-    case 'otstop': try { await api(`/api/otsetup/${S.famId}?device=${device}`, { method: 'DELETE' }); S.ot.st = { active: false }; store.set('otActive', false); toast('Gestopt. Zet OwnTracks op Quiet of verwijder de app.', null, 6000); } catch { toast('Geen verbinding. Probeer zo opnieuw.'); } renderOt(); break;
-    case 'otnew': try { S.ot.st = await api(`/api/otsetup/${S.famId}`, { method: 'POST', body: { device } }); toast('Nieuwe koppeling: tik opnieuw op “Instellen in OwnTracks”.', null, 6000); } catch { toast('Geen verbinding. Probeer zo opnieuw.'); } renderOt(); break;
+    case 'otstop': S.ot.stopped = true; try { await api(`/api/otsetup/${S.famId}?device=${device}`, { method: 'DELETE' }); S.ot.st = { active: false }; store.set('otActive', false); toast('Gestopt. Zet OwnTracks op Quiet of verwijder de app.', null, 6000); } catch { toast('Geen verbinding. Probeer zo opnieuw.'); } renderOt(); break;
+    case 'otnew': S.ot.stopped = false; try { S.ot.st = await api(`/api/otsetup/${S.famId}`, { method: 'POST', body: { device } }); toast('Nieuwe koppeling: tik opnieuw op “Instellen in OwnTracks”.', null, 6000); } catch { toast('Geen verbinding. Probeer zo opnieuw.'); } renderOt(); break;
     case 'queue': {
       const plan = S.fam.target?.plan; if (!plan) break;
       if (plan.type === 'split' && !meId()) { toast('Kies eerst wie je bent, dan weet ik welke rij van jullie is'); onboard('who'); break; }
@@ -2335,7 +2382,7 @@ document.addEventListener('click', async (e) => {
       const it = albumItems()[pv.i]; if (!it) break; it.star = !it.star;
       const p = S.album.find((x) => x.id === it.id); if (p) p.star = it.star;
       drawPhoto(); renderAlbum();
-      api(`/api/photos/${S.famId}/${it.id}`, { method: 'PATCH', body: { star: it.star, caption: it.caption || '' } }).catch(() => toast('Opslaan lukte niet'));
+      api(`/api/photos/${S.famId}/${it.id}`, { method: 'PATCH', body: { star: it.star } }).catch(() => toast('Opslaan lukte niet'));
       break;
     }
     case 'pvshare': {
@@ -2471,7 +2518,7 @@ document.addEventListener('submit', async (e) => {
     const bad = [...f.querySelectorAll('[name=phone]')].find((i) => i.value.trim() && !phoneOf(i.value));
     if (bad) { bad.focus(); toast('Dat gsm-nummer klopt niet (bv. +32 470 12 34 56)'); return; }
     document.activeElement?.blur();
-    if (await act({ type: 'people', people: ps })) toast('Opgeslagen ✓');
+    if (await act({ type: 'people', people: ps })) { S.famDirty = false; toast('Opgeslagen ✓'); renderFam(); }
   }
 });
 let swipeX = null, swipeY = null, swipeIn = null;
@@ -2511,12 +2558,23 @@ async function afterFamily() {
 }
 (async function start() {
   S.outbox = store.get('outbox', []);
+  { const f = store.get('inflight', null); if (f?.aid && !S.outbox.some((x) => x.aid === f.aid)) { S.outbox.unshift(f); store.set('outbox', S.outbox); } store.set('inflight', null); } // the server de-dupes by aid
   S.tickets = (await idb.all('tickets')) || [];
   await loadKeep();
   navigator.storage?.persist?.().catch(() => {});
   applyTheme();
   render();
   if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data?.type !== 'open') return;
+      let u; try { u = new URL(e.data.url, location.origin); } catch { return; }
+      const go = u.searchParams.get('go');
+      if (go && byId[go]) { S.tab = 'now'; render(); rideSheet(go); }
+      else if (u.searchParams.get('food')) foodSheet();
+      else if (u.searchParams.get('tickets')) { S.tab = 'tickets'; render(); }
+      else if (u.searchParams.get('chat')) openChat();
+      else { pollFamily(); loadLive(); }
+    });
     navigator.serviceWorker.register('/sw.js').then((reg) => {
       reg.addEventListener('updatefound', () => {
         const w = reg.installing;

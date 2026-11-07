@@ -446,3 +446,13 @@ test('photos: deleted on purpose → a late upload gets 410; a slow small-versio
   const g = await worker.fetch(new Request(`http://localhost/api/photos/${f.id}/stand0001/full`), env, ctx);
   assert.equal(g.headers.get('cache-control'), 'no-store'); assert.equal(g.headers.get('x-pretpark-small'), '1');
 });
+
+test('photos: PATCH only changes the fields sent (star on one phone, caption on the other)', async () => {
+  const f = await newFam();
+  const fd = new FormData(); fd.append('full', new File([Buffer.from('j')], 'x.jpg', { type: 'image/jpeg' })); fd.append('meta', '{}');
+  await call('POST', `/api/photos/${f.id}/patch0001`, fd);
+  await call('PATCH', `/api/photos/${f.id}/patch0001`, { caption: 'Wauw' });
+  await call('PATCH', `/api/photos/${f.id}/patch0001`, { star: true });
+  const p = (await call('GET', `/api/photos/${f.id}`)).data[0];
+  assert.equal(p.caption, 'Wauw'); assert.equal(p.star, true);
+});

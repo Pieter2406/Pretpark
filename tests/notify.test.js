@@ -24,8 +24,9 @@ test('rest reminder: not right after opening, yes after 100 min on your feet', (
   assert.ok(decide(fam, { ...live, open: NOW - 2 * 3600e3 }).notes.some((n) => n.tag === 'pause'));
   // a recent pause counts too
   assert.ok(!decide({ ...fam, pause: NOW - 20 * 60e3 }, { ...live, open: NOW - 2 * 3600e3 }).notes.some((n) => n.tag === 'pause'));
-  // unknown schedule: falls back to the family's own times
-  assert.ok(decide(fam, { ...live, open: null }).notes.some((n) => n.tag === 'pause'));
+  // unknown schedule: counted from the first ride done today; nothing done yet → no reminder
+  assert.ok(!decide(fam, { ...live, open: null }).notes.some((n) => n.tag === 'pause'));
+  assert.ok(decide({ ...fam, log: [{ t: NOW - 2 * 3600e3, ids: [k] }] }, { ...live, open: null }).notes.some((n) => n.tag === 'pause'));
 });
 
 test('"ligt stil": only for DOWN, and only while the target is younger than 90 min', () => {

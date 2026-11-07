@@ -297,3 +297,24 @@ No accounts; knowing the family id is the access.
   bereik"), photos only on this phone (refused by the server) are shown too. "💾 Bewaar … ook in je Foto's-app" shares
   unsaved camera photos via the share sheet (≤ 10 photos / 40 MB per tap; from the gallery = already saved). The viewer
   shows the local original (fallback to the thumb if the browser can't show it, e.g. HEIC on Android).
+
+## Review round 1 (7 Nov, park day)
+- Rides missing from ThemeParks.wiki (25 of 41, all kids rides: no wait sensor) were treated as closed, so the toddler
+  side never got a ride. Now `status()` assumes them open while the park is open (`parkIsOpen`: within open/close of
+  the feed, or some ride OPERATING), `s: 'ASSUMED'`, wait unknown (planner uses 5 min kids / 10 min else). The family
+  can mark any ride closed for the day (ride sheet "🚫 Is dicht" → action `closed` → `fam.closed` → `ctx.closed`).
+- Notifications: `describe` says "wachttijd onbekend" for unknown waits; "👉 Nu ideaal" only with a known wait ≤ 15,
+  never for the chosen plan, not within 10 min after a ride was done; a target ride that was OPERATING and turns CLOSED
+  mid-day counts as a breakdown (`memo.op`); meal/rest tips stop 45 min before closing; without a schedule the rest
+  reminder counts from the first ride done today. /api/live: 5-s timeout on ThemeParks.wiki, 3-s cap on the weather,
+  the last good copy (≤ 10 min, `stale: true`) when the feed fails.
+- Client state: a new action queues behind waiting outbox actions (order kept), the action in flight is saved
+  (`pp:inflight`, re-queued at start; aid de-dupes); `pos` has no aid (doesn't eat the 80-aid window). Chat: one
+  sender at a time, removal by id, polling overlaps 60 s. Tickets deleted offline are remembered (`pp:tgone`) and the
+  DELETE is retried before syncing. Photo PATCH sends/merges only the changed field. The SW focuses the app and posts
+  `{type:'open', url}` on a notification tap (no reload); the lazy cache is `LAZY = pretpark-lazy-<hash of vendor+img>`
+  (stamp-sw.mjs), so pdf.js/reader/photo updates reach phones.
+- UI: a dialog opened right after another closed reuses its history entry (`pendingBack`, 450 ms) — back no longer
+  leaves the app after sheet → guide; toasts above dialogs (z 70) but never in pocket mode; Gezin keeps unsaved people
+  edits (`S.famDirty`); the guide scrolls on short screens; the OwnTracks view creates the link once "wie ben jij" is
+  known; the boarded split card keeps "✅ Wij zijn klaar"; the iOS "Exacte locatie" path is current.

@@ -143,3 +143,45 @@ test('ratings steer repeats: 😍 makes a done ride come back sooner, 😬 keeps
   assert.ok(score(love) > score({}), 'loved ride scores higher than unrated');
   assert.ok(score(hate) < score({}), 'disliked ride scores lower');
 });
+
+test('round 1: rides missing from the feed are open while the park is (kids rides get suggested); "Is dicht" removes them', async () => {
+  const { plans, status, DEFAULT_PEOPLE, markedClosed } = await import('../public/logic.js');
+  const { ATTRACTIONS } = await import('../public/data.js');
+  const now = Date.UTC(2026, 10, 7, 12);
+  // like the real feed: only the big rides are reported
+  const reported = ATTRACTIONS.filter((a) => a.cat !== 'kids').slice(0, 16);
+  const live = { t: now, open: now - 3 * 3600e3, close: now + 6 * 3600e3, rides: Object.fromEntries(reported.map((a) => [a.id, { s: 'OPERATING', w: 25 }])) };
+  const kid = ATTRACTIONS.find((a) => a.cat === 'kids' && !live.rides[a.id]);
+  assert.deepEqual(status(live, kid.id), { open: true, wait: null, known: false, s: 'ASSUMED', assumed: true });
+  assert.equal(status({ ...live, t: now + 7 * 3600e3 }, kid.id).open, false, 'after closing: not assumed open');
+  const ps = plans({ people: DEFAULT_PEOPLE, favs: [], done: {}, live, walk: () => 150, month: 10, now });
+  const kidsSuggested = ps.some((p) => p.parts.some((pt) => byIdCat(pt.id) === 'kids'));
+  function byIdCat(id) { return ATTRACTIONS.find((a) => a.id === id)?.cat; }
+  assert.ok(kidsSuggested, 'a kids ride is suggested for the toddler');
+  const closed = Object.fromEntries(ATTRACTIONS.filter((a) => a.cat === 'kids').map((a) => [a.id, now - 60e3]));
+  const ps2 = plans({ people: DEFAULT_PEOPLE, favs: [], done: {}, live, walk: () => 150, month: 10, now, closed });
+  assert.ok(!ps2.some((p) => p.parts.some((pt) => byIdCat(pt.id) === 'kids')), 'marked closed: never suggested');
+  assert.equal(markedClosed(closed, kid.id, now + 13 * 3600e3), false, 'a closed mark lasts the day');
+});
+
+test('round 1: notifications never invent a wait, skip the chosen plan, and see CLOSED-after-running as a breakdown', async () => {
+  const { decideNotifications, describe, DEFAULT_PEOPLE } = await import('../public/logic.js');
+  const { ATTRACTIONS } = await import('../public/data.js');
+  const { newFamily } = await import('../public/family.js');
+  const NOW = Date.UTC(2026, 10, 7, 13);
+  const k = ATTRACTIONS.find((a) => a.name === 'Kondaa');
+  const unknown = { type: 'together', key: k.id, parts: [{ group: ['p1'], id: k.id, wait: 10, waitKnown: false }] };
+  assert.match(describe(unknown, DEFAULT_PEOPLE), /wachttijd onbekend/);
+  const DEV = 'dev12345678';
+  const fam = { ...newFamily(NOW - 5 * 3600e3), positions: { [DEV]: { lat: 50.699, lon: 4.59, t: NOW } }, ate: NOW - 10 * 60e3, pause: NOW - 10 * 60e3 };
+  const allNull = { rides: Object.fromEntries(ATTRACTIONS.map((a) => [a.id, { s: 'OPERATING', w: null }])), localTime: '2026-11-07T14:00:00Z', open: NOW - 3600e3, close: NOW + 8 * 3600e3, minutesLeft: 480, t: NOW };
+  const prefs = { best: true, fav: false, food: false, down: true };
+  assert.ok(!decideNotifications({ fam, deviceId: DEV, live: allNull, now: NOW, prefs, memo: {} }).notes.some((n) => n.tag === 'best'), 'no "Nu ideaal" with unknown waits');
+  // the target ride was running, now CLOSED mid-day → breakdown alert
+  const plan = { type: 'together', key: k.id, score: 1, minutes: 10, parts: [{ group: ['p1'], id: k.id, ride: ['p1'], watch: [], escorted: [], walkM: 100, wait: 5, waitKnown: true, minutes: 10 }] };
+  const f2 = { ...fam, target: { plan, setAt: NOW - 10 * 60e3 } };
+  const run = { ...allNull, rides: { ...allNull.rides, [k.id]: { s: 'OPERATING', w: 10 } } };
+  const r1 = decideNotifications({ fam: f2, deviceId: DEV, live: run, now: NOW - 60e3, prefs, memo: {} });
+  const r2 = decideNotifications({ fam: f2, deviceId: DEV, live: { ...run, rides: { ...run.rides, [k.id]: { s: 'CLOSED', w: null } } }, now: NOW, prefs, memo: r1.memo });
+  assert.ok(r2.notes.some((n) => n.tag === 'down'), 'CLOSED after running = breakdown');
+});
