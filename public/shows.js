@@ -25,13 +25,14 @@ export const SHOWS = [
 // haunted houses (house), scare zones (zone) and the pizza buffet: open from–to
 export const SPOOKY = [
   { id: 'grand-hotel', name: 'The Grand Hotel', icon: '🏨', kind: 'house', where: 'Exotic World', ...near('Tiki-Waka', 50.696948, 4.587079), price: '€ 7,50 · verlengde dag € 8,50', hours: { day: ['13:00', '17:00'], ext: ['12:00', '22:00'] } },
-  { id: 'aquarium', name: 'Aquarium', icon: '🐙', kind: 'house', where: 'Dock World', ...near('Mecalodon', 50.69739, 4.589106), price: '€ 6,50 · verlengde dag € 7,50', hours: { day: ['14:00', '17:00'], ext: ['13:00', '22:00'] } },
+  // the queue entrance as seen on the family's own photos (camera GPS, 7 Nov), not the guide's "near Mecalodon"
+  { id: 'aquarium', name: 'Aquarium', icon: '🐙', kind: 'house', where: 'Dock World', ...near('Octopus', 50.69709, 4.58776), seen: true, price: '€ 6,50 · verlengde dag € 7,50', hours: { day: ['14:00', '17:00'], ext: ['13:00', '22:00'] } },
   { id: 'silence', name: 'Silence', icon: '🤫', kind: 'house', where: 'Karma World', ...near('Cobra', 50.700441, 4.594102), price: '€ 6,50 · verlengde dag € 7,50', hours: { day: ['15:00', '17:00'], ext: ['14:00', '22:00'] } },
   { id: 'mine-blast', name: 'Mine Blast', icon: '💥', kind: 'house', where: 'Adventure World', ...near('Dalton Terror', 50.698754, 4.588001), price: 'gratis', hours: { day: ['16:00', '18:00'], ext: ['16:00', '22:00'] } },
   { id: 'hecatomb', name: 'Hecatomb', icon: '💀', kind: 'zone', where: 'bij Kondaa', ...near('Kondaa', 50.697408, 4.585381), price: 'gratis', hours: { day: ['14:00', '18:00'], ext: ['14:00', '22:00'] } },
   { id: 'innocence', name: 'Innocence', icon: '🧸', kind: 'zone', where: 'Adventure World', ...near('Buzzsaw', 50.699144, 4.588711), price: 'gratis', hours: { day: ['13:00', '18:00'], ext: ['13:00', '22:00'] } },
   { id: 'arachnophobia', name: 'Arachnophobia', icon: '🕷️', kind: 'zone', where: 'Adventure World', ...near('Silverton', 50.699714, 4.589814), price: 'gratis', hours: { day: ['14:30', '18:00'], ext: ['15:00', '22:00'] } },
-  { id: 'psycho-circus', name: 'Psycho Circus: The Final Act', icon: '🤡', kind: 'zone', where: 'plek niet vermeld', price: 'gratis', hours: { day: ['10:30', '18:00'], ext: ['10:30', '22:00'] } },
+  { id: 'psycho-circus', name: 'Psycho Circus', icon: '🤡', kind: 'zone', where: 'bij 4D Wanted Alive', ...near('4D Wanted Alive', 50.70003, 4.59057), seen: true, price: 'gratis', hours: { day: ['10:30', '18:00'], ext: ['10:30', '22:00'] } }, // place from the family's photos (camera GPS, 7 Nov)
   { id: 'freaky-pizza', name: 'Freaky Pizza Festival', icon: '🍕', kind: 'food', where: 'tegenover de 4D-bioscoop', ...near('4D Wanted Alive', 50.700219, 4.590535), price: 'buffet vanaf € 16,90, clowns aan tafel', hours: { ext: ['11:30', '21:30'] } },
 ];
 export const ADVICE = 'Spookhuizen zijn afgeraden onder 16 jaar. De scare zones komen pas echt tot leven bij donker. Kinderen onder 12 krijgen gratis een anti-monsterbadge aan de Info-balie.';

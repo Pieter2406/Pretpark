@@ -480,3 +480,19 @@ No accounts; knowing the family id is the access.
   Fonts: Caveat added to the Google Fonts link. SW shell includes wrapdata.js / wrapped.js.
 - Test: scratchpad wrap.js (simulated day + 7 photos; all slides saved as PNG; book in 3 styles, each PDF through pdfinfo;
   Chromium + WebKit).
+
+## Photo places corrected (7 Nov evening)
+- Analysis of all 33 photos (originals from R2, EXIF read with PIL, each image looked at, compared with fam.log): the
+  app tagged gallery photos with the phone's position *when they were added* (live fix within 10 min of the file
+  time), and `nearest()` also picked restaurants (Turbine → "Hungry Sharky", Dalton Terror → "Slush Factory", Buzzsaw →
+  "Cook House"). 21 rows fixed in D1 (`near` + camera GPS as lat/lon; backup of the old values in the session scratchpad
+  meta/backup-near.json): Dalton Terror, Buzzsaw, Fanta-fotohokje ×2, Bubble Swirl, Psycho Circus (scare zone) ×4,
+  Aquarium (spookhuis) ×2, Loup-Garou (photo of the ride-photo screen), Turbine ×2; 7 kept their ride with exact GPS.
+  The car photo (10:47) and Vincent's photo from home (6 Nov) keep no place (and no home GPS is stored).
+- Code: `public/exif.js` — `readExif` (minimal JPEG/TIFF parser: DateTimeOriginal, OffsetTimeOriginal, GPS; 33/33 equal
+  to PIL on the real originals), `exifTime`, `placeOf(pos, {t})` (rides first; a restaurant only when ≤ 25 m and ≥ 20 m
+  closer than the nearest ride; a Halloween spot only when its place was measured (`seen` in shows.js: Aquarium and
+  Psycho Circus, from the family's photos) and it is open at the photo's time). `addPhotos`: time = EXIF, else camera
+  now / file date; place = EXIF GPS, else the live fix only when the photo is ≤ 2 min old; lat/lon only kept when the
+  photo has a park place. `nearest()` (chat location) uses `placeOf` too. Tests: tests/exif.test.js, scratchpad
+  exife2e.js (EXIF photo at Turbine added while standing at Pulsar → Turbine + its own time; Chromium + WebKit).

@@ -8,6 +8,7 @@ import { freshTracker, addFix, detect, farState } from './activity.js';
 import { makePark, pathLength, bearingXY } from './route.js';
 import { apply, phoneOf } from './family.js';
 import { showsOn, spookyOn, nextShow, dayKind, ADVICE } from './shows.js';
+import { readExif, exifTime, placeOf } from './exif.js';
 import { idb } from './idb.js';
 import { PHOTOS } from './photos.js';
 
@@ -2162,11 +2163,7 @@ async function refreshUploads() {
   }
   if (S.tab === 'album') renderAlbum();
 }
-function nearest(here) {
-  let best = null;
-  for (const x of [...ATTRACTIONS, ...FOOD]) { const d = distM(here, x); if (d < 90 && (!best || d < best.d)) best = { d, name: x.name }; }
-  return best?.name || '';
-}
+const nearest = (here) => placeOf(here, { t: Date.now() }); // rides first, a restaurant only when clearly closer (exif.js)
 async function thumbOf(file) {
   let bmp;
   try {
@@ -2210,10 +2207,16 @@ async function addPhotos(files, fromCamera, caption = '') {
     if (!picked.type.startsWith('image/') && !/\.(heic|heif)$/i.test(picked.name)) continue;
     // stored and sent as bytes in memory, not as a reference to the picker's file (see solid)
     const file = (await solid(picked, picked.name)) || picked;
-    const t = fromCamera ? Date.now() : (file.lastModified || Date.now());
-    const here = live && Math.abs(Date.now() - t) < 10 * 60e3 ? live : null; // only tag a place when it was taken just now
+    // When and where it was really taken: the photo's own EXIF first (gallery photos carry the camera's time and GPS);
+    // our live fix only for a photo taken just now (2 min) — not the place where it was added later (7 Nov: photos of
+    // Turbine and Loup-Garou were tagged with wherever the phone was when they were added from the gallery)
+    let ex = null; try { ex = readExif(await file.slice(0, 256 * 1024).arrayBuffer()); } catch { /* no EXIF */ }
+    const t = exifTime(ex) || (fromCamera ? Date.now() : (file.lastModified || Date.now()));
+    const pos = ex?.lat != null ? { lat: ex.lat, lon: ex.lon } : live && Math.abs(Date.now() - t) < 2 * 60e3 ? live : null;
+    const near = placeOf(pos, { t });
     const { thumb, w, h } = await thumbOf(file);
-    const meta = { t, lat: here?.lat ?? null, lon: here?.lon ?? null, near: here ? nearest(here) : '', w, h, ...(caption ? { caption: caption.slice(0, 200) } : {}) };
+    // the GPS is only kept for photos in the park (a photo taken at home doesn't carry the home address along)
+    const meta = { t, lat: near ? pos.lat : null, lon: near ? pos.lon : null, near, w, h, ...(caption ? { caption: caption.slice(0, 200) } : {}) };
     const id = rnd(16);
     // the kept copy first; the queue then only refers to it (one copy of the original on the phone).
     // From the gallery it's already in the phone's Photos app (saved: 1); from the camera it isn't.
