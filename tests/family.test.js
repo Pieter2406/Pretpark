@@ -404,3 +404,37 @@ test('done: both parents tapping "Gedaan" for the same plan counts once; an unfi
   const g = apply(withTarget(together, NOW - 3600e3), { type: 'done', ids: [id], plan: 12345 }, NOW);
   assert.equal(g.done[id], 1);
 });
+
+test('round 5: a late done for a replaced plan, or another ride, leaves the current plan alone', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  const P = f.target.setAt, x = f.target.plan.parts[0].id;
+  const other = ATTRACTIONS.find((a) => a.id !== x && a.cat === 'family').id;
+  f = apply(f, { type: 'queue', wait: 20 }, NOW - 25 * 60e3);
+  // "Gedaan" on another ride's sheet (old clients): counted, plan + queue stay, no wait estimated for x
+  let g = apply(f, { type: 'done', ids: [other] }, NOW - 60e3);
+  assert.ok(g.target && g.target.q); assert.equal(g.done[other], 1); assert.equal((g.waits || []).length, 0);
+  // a late tap for an older plan: counted, current plan stays, and the real "Gedaan" for it still counts
+  g = apply(f, { type: 'done', ids: [other], plan: P - 999999 }, NOW - 60e3);
+  assert.ok(g.target);
+  g = apply(g, { type: 'done', ids: [x], plan: P }, NOW - 30e3);
+  assert.equal(g.done[x], 1); assert.equal(g.target, null);
+});
+
+test('round 5: "Ongedaan" brings the plan back with its queue; moving or re-adding keeps the plan mark', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  const P = f.target.setAt, x = f.target.plan.parts[0].id;
+  f = apply(f, { type: 'queue', wait: 20 }, NOW - 25 * 60e3);
+  f = apply(f, { type: 'done', ids: [x], plan: P }, NOW - 60e3);
+  assert.equal(f.target, null); assert.equal(f.waits.length, 1);
+  const u = apply(f, { type: 'undo', id: x, restore: P }, NOW);
+  assert.equal(u.target.setAt, P); assert.ok(u.target.q[0]); assert.equal(u.waits.length, 0); assert.equal(u.done[x], undefined);
+  // moved in the history: the other phone's late "Gedaan" for P still doesn't count twice
+  let m = apply(f, { type: 'histmove', k: 'ride', id: x, t: f.log[0].t, to: NOW - 5 * 60e3 }, NOW);
+  m = apply(m, { type: 'done', ids: [x], plan: P }, NOW);
+  assert.equal(m.done[x], 1);
+  // deleted and put back ("Terugzetten") with its mark
+  let r = apply(f, { type: 'histdel', k: 'ride', id: x, t: f.log[0].t }, NOW);
+  r = apply(r, { type: 'ridelog', id: x, when: NOW - 60e3, s: P }, NOW);
+  r = apply(r, { type: 'done', ids: [x], plan: P }, NOW);
+  assert.equal(r.done[x], 1);
+});

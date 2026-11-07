@@ -135,10 +135,16 @@ export function apply(fam, act, now) {
       // both parents tapping must not count the ride twice (a plan that was replaced unfinished still counts)
       if (act.plan != null && f.log.some((l) => l.s === act.plan)) break;
       const ids = (Array.isArray(act.ids) ? act.ids : []).filter(okId).slice(0, 3);
+      // Does this done end the current plan? Only when it says so (plan/target = its setAt) or, without either (old
+      // clients), when it is one of the plan's rides. A late tap for a replaced plan, or "Gedaan" on some other ride's
+      // sheet, counts the ride but leaves the current plan, its queue and its wait estimate alone.
+      const planIds = new Set((target?.plan?.parts || []).map((p) => p.id).filter(Boolean));
+      const stale = act.plan != null && (!target || target.setAt !== act.plan);
+      const ends = !!target && !beforeTarget() && !stale && (act.plan != null || act.target != null || ids.some((id) => planIds.has(id)));
       // a queue nobody tapped "aan de beurt" for: estimate the wait as queue → done minus the ride and getting off.
       // Only the sender's own part (the other half may still be in line), only with a known posted wait, and not
       // when "Gedaan" came much later (forgotten until after lunch).
-      if (target && !beforeTarget()) {
+      if (ends) {
         for (const [part, q] of Object.entries(target.q || {})) {
           if (q.b || q.w == null || (act.part != null && String(act.part) !== part)) continue;
           const a = byId[target.plan?.parts?.[part]?.id];
@@ -147,9 +153,9 @@ export function apply(fam, act, now) {
         }
       }
       for (const id of ids) f.done[id] = (f.done[id] || 0) + 1;
-      const s = target && !beforeTarget() ? target.setAt : Number.isFinite(act.plan) ? act.plan : null;
+      const s = ends ? target.setAt : Number.isFinite(act.plan) ? act.plan : null;
       f.log = [...f.log, { t, ids, ...(s != null ? { s } : {}) }].sort((a, b) => a.t - b.t).slice(-80);
-      if (!beforeTarget()) f.target = null;
+      if (ends) { f.prev = target; f.target = null; } // kept for "Ongedaan" (queue, guesses, ready come back with it)
       break;
     }
     case 'undo':
@@ -162,7 +168,11 @@ export function apply(fam, act, now) {
         if (i >= 0) {
           const e = f.log[i], ids = e.ids.filter((x) => x !== act.id);
           f.log = ids.length ? f.log.map((l, j) => (j === i ? { ...l, ids } : l)) : f.log.filter((_, j) => j !== i);
-          f.waits = (f.waits || []).filter((w) => !(w.id === act.id && w.t === e.t));
+          const restoring = Number.isFinite(act.restore) && !f.target && f.prev?.setAt === act.restore && e.s === act.restore;
+          // the waits that done estimated at that moment (for this ride; all of the plan's when the plan comes back)
+          f.waits = (f.waits || []).filter((w) => !(w.t === e.t && (w.id === act.id || (restoring && e.ids.includes(w.id)))));
+          // "Ongedaan" right after "Gedaan": the plan comes back as it was (queue, guesses, ready), not as a new one
+          if (restoring) { f.target = f.prev; f.prev = null; }
         }
       }
       break;
@@ -255,7 +265,7 @@ export function apply(fam, act, now) {
       if (!okId(act.id)) throw new Error('bad id');
       const w = histTime(act.when, now);
       f.done[act.id] = (f.done[act.id] || 0) + 1;
-      f.log = [...f.log, { t: w, ids: [act.id] }].sort((a, b) => a.t - b.t).slice(-80);
+      f.log = [...f.log, { t: w, ids: [act.id], ...(Number.isFinite(act.s) ? { s: act.s } : {}) }].sort((a, b) => a.t - b.t).slice(-80);
       break;
     }
     // histdel {k: 'ride'|'ate'|'pause'|'diaper', t, id?}: delete that entry; histmove {..., to}: change its time
@@ -266,10 +276,11 @@ export function apply(fam, act, now) {
         if (!okId(act.id)) throw new Error('bad id');
         const i = f.log.findIndex((l) => l.t === at && l.ids?.includes(act.id));
         if (i < 0) break; // already gone (the other phone): nothing to do
-        const ids = f.log[i].ids.filter((x) => x !== act.id);
+        const old = f.log[i], ids = old.ids.filter((x) => x !== act.id);
         f.log = ids.length ? f.log.map((l, j) => (j === i ? { ...l, ids } : l)) : f.log.filter((_, j) => j !== i);
         if (to != null) {
-          f.log = [...f.log, { t: to, ids: [act.id] }].sort((a, b) => a.t - b.t);
+          // keeps the plan it ended (s), so the other phone's late "Gedaan" for that plan still isn't counted twice
+          f.log = [...f.log, { t: to, ids: [act.id], ...(old.s != null ? { s: old.s } : {}) }].sort((a, b) => a.t - b.t);
           f.waits = (f.waits || []).map((w) => (w.id === act.id && w.t === at ? { ...w, t: to } : w));
         } else {
           if (f.done[act.id] > 1) f.done[act.id]--; else delete f.done[act.id];

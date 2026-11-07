@@ -379,3 +379,11 @@ No accounts; knowing the family id is the access.
 - Diagnostics: `diag(kind, msg)` in app.js (+ idb.js `pp-diag` events, window errors) → POST /api/diag (batched, ≤ 1
   per kind per minute) → D1 `diag` (t, family, device, email, kind, msg; kept 3 days). Read it with
   `SELECT * FROM diag ORDER BY t DESC` to see what fails on someone's phone.
+
+## Review round 5 (7 Nov)
+- `done` ends the current plan only when it says so (`plan`/`target` = its setAt) or, without either, when one of its
+  ids is a ride of the plan; a late tap for a replaced plan or "Gedaan" on another ride's sheet only counts the ride.
+  The ride sheet's "✓ Gedaan" for a non-plan ride sends `ridelog` (plan, queue and wait estimate untouched).
+- The ended target is kept in `fam.prev`; `undo {id, restore: setAt}` (sent by "Ongedaan"/"Klopt niet") puts it back
+  as it was (queue, guesses, ready) and drops the waits that done estimated.
+- `histmove` and "Terugzetten" (`ridelog {s}`) keep the log entry's plan mark `s`, so double counting stays impossible.

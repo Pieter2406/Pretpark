@@ -442,7 +442,7 @@ function historyItems() {
   const f = S.fam; if (!f) return [];
   const now = Date.now(), today = (t) => t && now - t < 14 * 3600e3;
   const out = [];
-  for (const l of f.log || []) if (today(l.t)) for (const id of l.ids || []) if (byId[id]) out.push({ k: 'ride', id, t: l.t, icon: byId[id].icon, name: byId[id].name });
+  for (const l of f.log || []) if (today(l.t)) for (const id of l.ids || []) if (byId[id]) out.push({ k: 'ride', id, t: l.t, s: l.s, icon: byId[id].icon, name: byId[id].name });
   const hist = (f.hist || []).filter((h) => today(h.t) && HIST[h.k]);
   // a meal/pause/check from before the history existed
   for (const k of ['ate', 'pause', 'diaper']) if (today(f[k]) && !hist.some((h) => h.k === k && h.t === f[k])) hist.push({ k, t: f[k] });
@@ -465,7 +465,7 @@ function openHistory() {
   openSheet(`<h2>📜 Geschiedenis van vandaag</h2>
     <p class="small muted">Verkeerd getikt? Tik op ✕ om het te verwijderen of tik op de tijd om ze aan te passen. Dit geldt voor het hele gezin.</p>
     ${items.length ? `<div class="list hist">${items.map((it) => {
-      const key = esc(JSON.stringify({ k: it.k, t: it.t, ...(it.id ? { id: it.id } : {}) }));
+      const key = esc(JSON.stringify({ k: it.k, t: it.t, ...(it.id ? { id: it.id } : {}), ...(it.s != null ? { s: it.s } : {}) }));
       return `<div class="ride hrow"><span aria-hidden="true">${it.icon}</span><span><b>${esc(it.name)}</b>${it.sub ? `<br><span class="small muted">${esc(it.sub)}</span>` : ''}</span>
         ${it.k === 'car' ? `<span class="small muted">${hhmm(it.t)}</span>` : `<input type="time" class="htime" value="${hhmmIn(it.t)}" data-hmove="${key}" aria-label="Tijd van ${esc(it.name)}">`}
         <button class="ghost hdel" data-hdel="${key}" aria-label="Verwijder ${esc(it.name)}">✕</button></div>`;
@@ -478,10 +478,11 @@ function openHistory() {
 async function histDelete(it) {
   const name = it.k === 'ride' ? byId[it.id]?.name : { ate: 'Gegeten', pause: 'Pauze', diaper: 'Luiercheck', car: 'Parkeerplek' }[it.k];
   const car = S.fam.car;
-  const ok = it.k === 'car' ? await act({ type: 'car', lat: null }, true) : await act({ type: 'histdel', ...it }, true);
+  const { s, ...entry } = it;
+  const ok = it.k === 'car' ? await act({ type: 'car', lat: null }, true) : await act({ type: 'histdel', ...entry }, true);
   if (!ok) return;
   // put it back exactly as it was
-  const back = it.k === 'ride' ? { type: 'ridelog', id: it.id, when: it.t } : it.k === 'car' ? { type: 'car', lat: car.lat, lon: car.lon, note: car.note } : { type: it.k, at: it.t };
+  const back = it.k === 'ride' ? { type: 'ridelog', id: it.id, when: it.t, ...(s != null ? { s } : {}) } : it.k === 'car' ? { type: 'car', lat: car.lat, lon: car.lon, note: car.note } : { type: it.k, at: it.t };
   toast(`${name} (${hhmm(it.t)}) verwijderd`, { label: 'Terugzetten', fn: async () => { if (await act(back, true)) { toast('Teruggezet'); if (!$('#sheet').hidden) openHistory(); render(); } } }, 7000);
   if (!$('#sheet').hidden) openHistory();
   render();
@@ -1478,7 +1479,7 @@ async function finishPlan({ auto = false, at } = {}) {
     const counted = ids.some((id, k) => num(S.fam.done?.[id]) > before[k]);
     S.pendingRate = !unknown && who.length && byId[rated]?.cat ? { id: rated, who, t: Date.now() } : null;
     autoLog(`🎉 ${name} gedaan`, counted ? async () => {
-      for (const id of ids) await act({ type: 'undo', id }, true);
+      for (const [k, id] of ids.entries()) await act({ type: 'undo', id, ...(k === 0 && t ? { restore: t.setAt } : {}) }, true);
       if (plan && !S.fam.target) await act({ type: 'target', plan, device }); // only when nothing newer was chosen
       S.pendingRate = null;
     } : null, `🎉 ${name} gedaan (automatisch)`);
@@ -1488,7 +1489,8 @@ async function finishPlan({ auto = false, at } = {}) {
   // a misclick: "Ongedaan" in the toast takes the ride(s) back and puts the plan back (when nothing newer was chosen)
   const counted = ids.some((id, k) => num(S.fam.done?.[id]) > before[k]);
   celebrate(counted ? async () => {
-    for (const id of ids) await act({ type: 'undo', id }, true);
+    // the first undo brings the plan back as it was (restore = its setAt); a fresh plan only if that didn't work
+    for (const [k, id] of ids.entries()) await act({ type: 'undo', id, ...(k === 0 && t ? { restore: t.setAt } : {}) }, true);
     if (plan && !S.fam.target) await act({ type: 'target', plan, device }, true);
   } : null); scrollTo(0, 0);
   if (!unknown && who.length && byId[rated]?.cat) rateSheet(rated, who); else photoMoment(ids);
@@ -2475,7 +2477,14 @@ document.addEventListener('click', async (e) => {
     await act({ type: 'closed', id: d.closed, on });
     toast(on ? '🚫 Gemeld: ik stel deze attractie vandaag niet meer voor' : '✅ Weer open'); rideSheet(d.closed); return;
   }
-  if (d.doneone) { const id = d.doneone; closeSheet(); if (S.guide) closeGuide(); if (!(await act({ type: 'done', ids: [id] }))) return; celebrate(() => act({ type: 'undo', id }, true)); photoMoment([id]); return; }
+  if (d.doneone) {
+    const id = d.doneone; closeSheet(); if (S.guide) closeGuide();
+    // the ride of the current plan: the normal "Gedaan" (ends the plan); any other ride: counted, the plan stays
+    if (S.fam.target?.plan?.parts?.some((p) => p.id === id)) { await finishPlan(); return; }
+    const when = Date.now();
+    if (!(await act({ type: 'ridelog', id, when }))) return;
+    celebrate(() => act({ type: 'histdel', k: 'ride', id, t: when }, true)); photoMoment([id]); return;
+  }
   if (d.dismiss) { S.dismissed[d.dismiss] = 1; store.set('dismissed', S.dismissed); renderBanners(); return; }
   if (d.goride) { const a = byId[d.goride]; closeSheet(); guideTap({ kind: 'ride-solo', id: a.id, name: a.name, icon: a.icon, lat: a.lat, lon: a.lon }); return; }
   if (d.food) { const f = byId[d.food]; closeSheet(); guideTap({ kind: 'food', id: f.id, name: f.name, icon: '🍽️', lat: f.lat, lon: f.lon }); return; }
