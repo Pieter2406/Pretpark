@@ -5,8 +5,8 @@
 // - A new version installs in the background; the app shows "Nieuwe versie · Herladen".
 // - /api/* is never cached here: app.js keeps its own last copies (localStorage, IndexedDB).
 // LAZY: a hash of vendor/ + img/ (set by scripts/stamp-sw.mjs): a new pdf.js, reader or ride photo reaches every phone
-const LAZY = 'pretpark-lazy-0';
-const VERSION = 'pretpark-7a487107de52';
+const LAZY = 'pretpark-lazy-940f4763f6';
+const VERSION = 'pretpark-9ef558091590';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
   '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js', '/fun.js', '/activity.js', '/compat.js',
