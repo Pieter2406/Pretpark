@@ -1,7 +1,7 @@
 // Family actions: idempotency (aid), the action's own time (at), new actions and the plan sanitiser.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, newFamily, sanitizePlan, okDevice, MAX_AIDS } from '../public/family.js';
+import { apply, newFamily, sanitizePlan, okDevice, MAX_AIDS, phoneOf } from '../public/family.js';
 import { plans, DEFAULT_PEOPLE } from '../public/logic.js';
 import { ATTRACTIONS, FOOD } from '../public/data.js';
 
@@ -337,4 +337,20 @@ test('diaper: the last check is remembered (a late replay never moves it back)',
   assert.equal(f.diaper, NOW);
   f = apply(f, { type: 'diaper', at: NOW - 3600e3 }, NOW);
   assert.equal(f.diaper, NOW);
+});
+
+test('phoneOf: country code with a trunk 0 or 00 prefix still dials', () => {
+  assert.equal(phoneOf('+32 (0)470 12 34 56'), '+32470123456');
+  assert.equal(phoneOf('+320470123456'), '+32470123456');
+  assert.equal(phoneOf('0032 470 12 34 56'), '+32470123456');
+  assert.equal(phoneOf('0470/12.34.56'), '0470123456');
+  assert.equal(phoneOf('12'), '');
+});
+
+test('queue: an unknown posted wait stays unknown (not 0)', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  f = apply(f, { type: 'queue', wait: null }, NOW - 10 * 60e3);
+  assert.equal(f.target.q[0].w, null);
+  f = apply(f, { type: 'queue', wait: 15 }, NOW - 9 * 60e3);
+  assert.equal(f.target.q[0].w, 15); // filled in by a later queue that knows it
 });

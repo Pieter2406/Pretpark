@@ -97,3 +97,9 @@ test('diaper check: near a toilet, ≥ 90 min since the last check, only the pho
   assert.ok(!d({ ...base, me: { [DEV]: 'p1' }, target: { plan, setAt: NOW - 60e3 } }).notes.some((n) => n.tag === 'diaper'), 'not the toddler\'s phone');
   assert.ok(d({ ...base, me: { [DEV]: 'p2' }, target: { plan, setAt: NOW - 60e3 } }).notes.some((n) => n.tag === 'diaper'), 'the toddler\'s phone');
 });
+
+test('rest reminder: a family arriving 2 h after opening is not told to sit down on arrival', () => {
+  const live = { ...allOpen(), localTime: LOCAL, open: NOW - 3 * 3600e3 };
+  const fam = famAt(NOW - 3 * 3600e3, { log: [{ t: NOW - 30 * 60e3, ids: [k] }] }); // first ride 30 min ago
+  assert.ok(!decide(fam, live).notes.some((n) => n.tag === 'pause'));
+});

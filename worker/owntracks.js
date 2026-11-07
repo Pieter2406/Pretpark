@@ -62,7 +62,9 @@ export function targetFor(fam, device, live) {
   const q = t.q?.[i] || (!t.q && t.queued ? { t: t.queued } : null);
   const a = pt.rest ? null : byId[pt.id];
   return { i, plan, a, rest: !!pt.rest, setAt: t.setAt, queuedAt: q?.t || null, boardedAt: q?.b || null, queuedAuto: !!q?.auto,
-    wait: q?.w ?? (pt.id ? status(live, pt.id).wait ?? pt.wait : null) };
+    wait: q?.w ?? (pt.id ? status(live, pt.id).wait ?? pt.wait : null),
+    // the wait the park posts (null when it reports none): what a queue stores; a planner guess would skew waitFactor
+    posted: q?.w ?? (pt.id && status(live, pt.id).known ? status(live, pt.id).wait : null) };
 }
 
 // Brussels wall-clock Date (getHours() works in the Worker, which runs in UTC)
@@ -91,7 +93,7 @@ export function actionsFor(e, T, fam, device) {
   const aid = aidOf(`${device}:${e.key}`);
   const note = (title, body = 'Klopt het niet? Open Pretpark en tik op “Klopt niet”.') => ({ tag: 'auto', title, body, url: '/' });
   switch (e.type) {
-    case 'queue': return [{ act: { type: 'queue', part: T.i, wait: T.wait, at: e.at, auto: true, aid }, note: note(`⏳ In de rij bij ${name}`, 'Automatisch herkend. Speel intussen de quiz of raad de wachttijd in Pretpark.') }];
+    case 'queue': return [{ act: { type: 'queue', part: T.i, wait: T.posted, at: e.at, auto: true, aid }, note: note(`⏳ In de rij bij ${name}`, 'Automatisch herkend. Speel intussen de quiz of raad de wachttijd in Pretpark.') }];
     case 'board': return [{ act: { type: 'board', part: T.i, at: e.at, aid }, note: null }];
     case 'unqueue': return [{ act: { type: 'unqueue', part: T.i, aid }, note: note(`↩️ Rij bij ${name} verlaten?`) }];
     case 'done': {

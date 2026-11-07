@@ -42,7 +42,11 @@ const S = {
 // ---------- people
 const people = () => S.fam?.people || [];
 const meId = () => S.fam?.me?.[device] || null;
+// the adult no other phone has claimed yet (the second phone mustn't default to the first phone's person); null = all taken
+const freeAdult = () => { const taken = new Set(Object.entries(S.fam?.me || {}).filter(([d]) => d !== device).map(([, p]) => p)); return people().find((p) => p.kind === 'adult' && !taken.has(p.id))?.id || null; };
 const person = (id) => people().find((p) => p.id === id);
+// live status, but a ride the family marked "Is dicht" counts as closed (map pins, list order)
+const famStatus = (id) => { const st = status(S.live, id); return markedClosed(S.fam?.closed, id) ? { ...st, open: false, wait: null, s: 'MARKED' } : st; };
 const emoji = (p) => (p?.pregnant ? '🤰' : p?.kind === 'adult' ? '🧑' : p?.height < 110 ? '👶' : '🧒');
 const pname = (p) => (p.id === meId() ? 'Jij' : p.name);
 const names = (ids) => ids.map((id) => person(id)).filter(Boolean).map(pname).join(' + ');
@@ -86,9 +90,13 @@ function takeFam(r) {
   const u = num(r.updated, 0);
   if (u && u < S.famUpdated) return false;
   S.fam = r.fam; if (u) S.famUpdated = u;
+  // actions still waiting to be sent stay visible on top of the server's copy (apply skips any it already has, by aid)
+  for (const a of S.outbox) { try { S.fam = apply(S.fam, a, a.at); } catch { /* invalid now: the server will say so */ } }
   saveFam();
   return true;
 }
+// actions in flight (by aid): survive the page being killed mid-request; the server de-dupes a re-send
+const inflight = (a, on) => { const m = store.get('inflight', null); const x = m && !Array.isArray(m) && !m.aid ? m : {}; if (on) x[a.aid] = a; else delete x[a.aid]; store.set('inflight', x); };
 
 // Change the shared family state. Every action carries an id (the server ignores repeats) and the time it happened.
 // Offline: apply it here with the same rules as the server and send it later.
@@ -102,14 +110,14 @@ async function act(a, quiet = false) {
     flushOutbox();
     return true;
   }
-  if (a.type !== 'pos') store.set('inflight', a); // survives the page being killed mid-request
+  if (a.type !== 'pos') inflight(a, true);
   try {
     const r = await api('/api/family/' + S.famId, { method: 'POST', body: a });
-    if (a.type !== 'pos') store.set('inflight', null);
+    if (a.type !== 'pos') inflight(a, false);
     takeFam(r); recompute(); if (!quiet) render();
     return true;
   } catch (e) {
-    if (a.type !== 'pos') store.set('inflight', null);
+    if (a.type !== 'pos') inflight(a, false);
     if (e.offline && a.type !== 'pos') {
       try { S.fam = apply(S.fam, a, a.at); } catch { return false; }
       S.outbox.push(a); store.set('outbox', S.outbox); saveFam();
@@ -127,8 +135,16 @@ async function flushOutbox() {
   flushing = true;
   try {
     while (S.outbox.length) {
-      try { takeFam(await api('/api/family/' + S.famId, { method: 'POST', body: S.outbox[0] })); }
-      catch (e) { if (e.status !== 400) break; } // only a rejected (invalid) action is dropped; anything else retries later
+      const head = S.outbox[0];
+      try { const r = await api('/api/family/' + S.famId, { method: 'POST', body: { ...head, tries: undefined } }); S.outbox.shift(); store.set('outbox', S.outbox); takeFam(r); continue; }
+      catch (e) {
+        if (e.offline || e.status === 401) break; // no signal / log in again: retry later, nothing lost
+        // a rejected action is dropped; one that keeps failing (busy, server error) is given up after 6 tries so it
+        // never blocks everything behind it
+        head.tries = (head.tries || 0) + 1;
+        if (e.status !== 400 && head.tries < 6) { store.set('outbox', S.outbox); break; }
+        if (e.status !== 400) toast('Een oude wijziging lukte niet en is overgeslagen.');
+      }
       S.outbox.shift(); store.set('outbox', S.outbox);
     }
     recompute(); render();
@@ -170,8 +186,10 @@ async function joinFamily(text) {
 }
 async function loadLive() {
   try {
-    S.live = await api('/api/live'); S.liveStale = false; cached.save('live', S.live);
-    rememberWaits(S.live);
+    const L = await api('/api/live');
+    // another server copy can be older than what we already have (a stale fallback): never step back in time
+    if (S.live?.t && L?.t && L.t < S.live.t) { S.liveStale = !!L.stale; }
+    else { S.live = L; S.liveStale = !!L?.stale; cached.save('live', S.live); rememberWaits(S.live); }
   } catch { if (!S.live) S.live = cached.load('live')?.v || null; S.liveStale = !!S.live; }
   recompute(); render();
 }
@@ -185,8 +203,7 @@ async function pollFamily() {
   if (document.hidden || !S.famId) return;
   loadOtAll();
   if (!S.chatOpen) loadChat();
-  await flushOutbox();
-  if (S.outbox.length) return; // keep local changes until they're sent
+  await flushOutbox(); // waiting local changes are re-applied on top of whatever the server sends (takeFam)
   try {
     const before = JSON.stringify(S.fam);
     if (takeFam(await api('/api/family/' + S.famId)) && JSON.stringify(S.fam) !== before) {
@@ -294,7 +311,9 @@ function myTarget() {
   if (!pt) return null;
   const q = t.q?.[i] || (!t.q && t.queued ? { t: t.queued } : null);
   return { i, plan, a: pt.rest ? null : byId[pt.id], rest: !!pt.rest, setAt: t.setAt, queuedAt: q?.t || null, boardedAt: q?.b || null, queuedAuto: !!q?.auto,
-    wait: q?.w ?? (pt.id ? status(S.live, pt.id).wait ?? pt.wait : null) };
+    wait: q?.w ?? (pt.id ? status(S.live, pt.id).wait ?? pt.wait : null),
+    // the wait the park posts (null when it reports none): what a queue stores; a planner guess would skew waitFactor
+    posted: q?.w ?? (pt.id && status(S.live, pt.id).known ? status(S.live, pt.id).wait : null) };
 }
 function runDetect(gap) {
   if (!S.auto || !S.fam || S.sim || (S.manual && Date.now() - S.manual.t < 20 * 60e3)) return; // a chosen spot only counts 20 min
@@ -323,7 +342,7 @@ async function autoApply(e, T) {
   const name = T?.a?.name || '';
   switch (e.type) {
     case 'queue':
-      if (!(await act({ type: 'queue', part: T.i, wait: T.wait, at: e.at, auto: true }, true))) return false;
+      if (!(await act({ type: 'queue', part: T.i, wait: T.posted, at: e.at, auto: true }, true))) return false;
       autoLog(`⏳ In de rij bij ${name} sinds ${hhmm(e.at)}`, () => act({ type: 'unqueue', part: T.i }), `⏳ In de rij bij ${name} (automatisch)`);
       break;
     case 'board':
@@ -332,7 +351,7 @@ async function autoApply(e, T) {
       break;
     case 'unqueue':
       if (!(await act({ type: 'unqueue', part: T.i }, true))) return false;
-      autoLog(`↩️ Rij bij ${name} verlaten`, () => act({ type: 'queue', part: T.i, wait: T.wait, at: T.queuedAt }), `↩️ Rij bij ${name} verlaten? (automatisch)`);
+      autoLog(`↩️ Rij bij ${name} verlaten`, () => act({ type: 'queue', part: T.i, wait: T.posted, at: T.queuedAt }), `↩️ Rij bij ${name} verlaten? (automatisch)`);
       break;
     case 'done': if ((await finishPlan({ auto: true, at: e.at })) === false) return false; break;
     case 'ask-done': if (T?.a) { S.ask = { id: T.a.id, setAt: T.setAt }; buzz([20, 60, 20]); render(); } break;
@@ -398,6 +417,7 @@ function closePocket() {
   S.pocket = false; $('#pocket').hidden = true; closeDialog($('#pocket'));
   if (!S.guide && $('#tview').hidden) wake(false);
   render();
+  if (S.afterPocket) { toast(S.afterPocket, null, 7000); S.afterPocket = null; }
 }
 function renderPocket() {
   const el = $('#pocket'); if (!el || el.hidden) return;
@@ -655,7 +675,7 @@ function renderList() {
   const ps = people();
   const f = S.filter;
   const can = (a) => ps.map((p) => canRide(p, a));
-  let rows = ATTRACTIONS.map((a) => ({ a, st: status(S.live, a.id), can: can(a), walk: walkOf(a) }));
+  let rows = ATTRACTIONS.map((a) => ({ a, st: famStatus(a.id), can: can(a), walk: walkOf(a) }));
   rows = rows.filter(({ a, can: c }) => {
     if (f === 'fav') return (S.fam.favs || []).includes(a.id);
     if (f === 'small') return ps.some((p, i) => p.kind === 'child' && p.height < 110 && c[i]);
@@ -719,7 +739,7 @@ function drawPins() {
   const pins = [], labels = [], under = [];
   const target = S.fam?.target?.plan ? new Set(S.fam.target.plan.parts.filter((p) => !p.rest).map((p) => p.id)) : new Set();
   // big, readable pins for open rides someone in the family can do; small grey dots for the rest
-  const rides = ATTRACTIONS.map((a) => ({ a, st: status(S.live, a.id), xy: S.park.toXY(a), can: ps.some((p) => canRide(p, a)) }))
+  const rides = ATTRACTIONS.map((a) => ({ a, st: famStatus(a.id), xy: S.park.toXY(a), can: ps.some((p) => canRide(p, a)) }))
     .map((r) => ({ ...r, big: r.st.open && r.can }))
     .sort((x, y) => (x.big - y.big) || (target.has(x.a.id) - target.has(y.a.id))); // big ones drawn last = on top
   const placed = [];
@@ -784,7 +804,7 @@ function mapGestures(box) {
   box.addEventListener('pointermove', (e) => {
     if (!pts.has(e.pointerId) || !start) return;
     pts.set(e.pointerId, e);
-    const scale = (2 * MAP.R) / Math.min(box.clientWidth, box.clientHeight);
+    const scale = (2 * MAP.R) / Math.max(box.clientWidth, box.clientHeight); // "slice": the square view fills the longer side
     const ids = [...pts.keys()];
     if (ids.length === 1) {
       const s0 = start.pts.get(ids[0]); if (!s0) return;
@@ -943,7 +963,9 @@ function openGuide(target) {
   $('#guide').hidden = false; openDialog($('#guide'));
   enableCompass(false);
   wake(true);
-  G.svg = null; G.lastSay = ''; G.lastDist = null;
+  G.svg = null; G.lastSay = ''; G.lastDist = null; G.arrivedAt = null; G.band = null; guideState = null;
+  // iOS only lets a page speak after a first speak() inside a tap: this tap opens the guide
+  if (S.voice && window.speechSynthesis) { try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch { /* no voice */ } }
   if (S.here) { S.here = S.park.fromHere(pos()); }
   updateGuide(true);
 }
@@ -964,13 +986,16 @@ function say(text, force) {
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
 let arrowAngle = 0, guideState = null;
+const turnBand = (r, prev) => { let k = 0; for (const [i, b] of [25, 70, 135].entries()) if (r >= b + (prev == null ? 0 : prev <= i ? 8 : -8)) k = i + 1; return k; };
 function guideCalc() {
   const g = S.guide; if (!g || !S.here) return null;
   const path = S.here.path(g);
   const dist = pathLength(path);
   const here = path[0];
   const brg = bearingXY(here, S.park.lookahead(path, 25));
-  return { g, path, dist, here, brg, arrived: dist < 25 };
+  // arrive under 25 m, leave only above 40 m: GPS jitter around 25 m must not flip the screens
+  const was = guideState?.g === g && guideState.arrived;
+  return { g, path, dist, here, brg, arrived: dist < 25 || (was && dist < 40) };
 }
 function updateGuide(full) {
   const c = guideCalc(); if (!c) return;
@@ -1002,7 +1027,7 @@ function updateGuide(full) {
       <div class="mapwrap" id="guideMap"></div>
       <div class="foot"><button data-go="guideclose">Stop</button>${doneBtn}</div>`;
     G.svg = null;
-    if (arrived) { buzz([80, 60, 80]); say(`Je bent er. ${g.name}.`, true); }
+    if (arrived && G.arrivedAt !== g) { G.arrivedAt = g; buzz([80, 60, 80]); say(`Je bent er. ${g.name}.`, true); }
   }
   // the map: built once, then only moved
   const span = Math.max(60, Math.min(220, dist * 0.7));
@@ -1041,12 +1066,15 @@ function guideHeading() {
   const a = $('#arrowSvg'); if (a) a.style.transform = `rotate(${arrowAngle}deg)`;
   const sayEl = $('#sayTxt');
   if (sayEl) {
-    const r = Math.abs(rel);
+    // the direction band (straight / slight / turn / back) with 8° of hysteresis around the last one, so a wobbling
+    // compass doesn't flip the text (and buzz) back and forth
+    const k = turnBand(Math.abs(rel), G.band);
+    G.band = k;
     const text = !hasHeading ? 'De pijl wijst zoals op een kaart (noorden boven).'
-      : r < 25 ? '⬆️ Rechtdoor' : r < 70 ? (rel > 0 ? '↗️ Schuin rechts' : '↖️ Schuin links') : r < 135 ? (rel > 0 ? '➡️ Rechts afslaan' : '⬅️ Links afslaan') : '↩️ Draai je om';
+      : [() => '⬆️ Rechtdoor', () => (rel > 0 ? '↗️ Schuin rechts' : '↖️ Schuin links'), () => (rel > 0 ? '➡️ Rechts afslaan' : '⬅️ Links afslaan'), () => '↩️ Draai je om'][k]();
     if (text !== G.lastSay) {
       sayEl.textContent = text;
-      if (hasHeading && G.lastSay) { buzz(text.includes('Rechtdoor') ? 10 : [30, 40, 30]); say(text.replace(/^\S+\s/, '')); }
+      if (hasHeading && G.lastSay && Date.now() - (G.lastBuzz || 0) > 3000) { G.lastBuzz = Date.now(); buzz(text.includes('Rechtdoor') ? 10 : [30, 40, 30]); say(text.replace(/^\S+\s/, '')); }
       G.lastSay = text;
     }
   }
@@ -1660,14 +1688,29 @@ function parkingCard(compact) {
 
 // ---------- tickets (IndexedDB on the phone + shared via the server)
 const shownTickets = () => S.tickets.filter((t) => !pendingDelete.has('t:' + t.id));
+// a data: image scaled to ≤ max px (JPEG); the original when the browser can't draw it
+async function shrinkDataUrl(src, max) {
+  try {
+    const img = new Image(); img.src = src; await img.decode();
+    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.92);
+  } catch { return src; }
+}
 async function syncTickets() {
   const local = await idb.all('tickets');
   if (local) S.tickets = local; // null = IndexedDB hiccup: keep what is on screen
   if (local && S.famId) {
     // send pending ones one by one: one rejected ticket must not block the rest
-    for (const t of local.filter((x) => x.pending)) {
-      try { await api(`/api/tickets/${S.famId}`, { method: 'POST', body: { ...t, pending: undefined, error: undefined }, timeout: 20000 }); t.pending = false; t.error = null; }
-      catch (e) { if (e.offline || e.status === 401) break; t.error = e.error || 'niet gedeeld'; }
+    for (const t of local.filter((x) => x.pending && !x.refused)) {
+      if ((t.crop?.length || 0) > 850_000) t.crop = await shrinkDataUrl(t.crop, 1000); // imported before the crop was capped
+      try { await api(`/api/tickets/${S.famId}`, { method: 'POST', body: { ...t, pending: undefined, error: undefined, refused: undefined }, timeout: 20000 }); t.pending = false; t.error = null; }
+      catch (e) {
+        if (e.offline || e.status === 401) break;
+        t.error = e.error || 'niet gedeeld';
+        if (e.status === 413 || (e.status === 400 && e.error !== 'too many tickets')) t.refused = true; // the same bytes would be refused again: stays on this phone only
+      }
       await idb.put('tickets', t);
     }
     try {
@@ -1691,16 +1734,17 @@ async function importTickets(files) {
   try {
     const { readTickets } = await import('./tickets.js');
     const found = await readTickets(files, (msg) => { S.ticketBusy = msg; const el = $('#tbusy'); if (el) el.textContent = msg; });
-    const known = new Set(S.tickets.map((t) => t.code).filter(Boolean));
+    const known = new Set(S.tickets.map((t) => t.code || `${t.source}#${t.pageNo}`));
     let added = 0, nr = S.tickets.length;
     for (const f of found) {
-      if (f.code && known.has(f.code)) continue;
+      if (known.has(f.code || `${f.source}#${f.pageNo}`)) continue; // importing the same file again adds nothing
       const isParking = /parking|parkeer|stationnement/i.test(`${f.source} ${f.code || ''}`);
       const t = { ...f, id: rnd(16), name: isParking ? 'Parkeerticket' : `Ticket ${++nr}`, person: isParking ? 'car' : null, created: Date.now() + nr, pending: true };
       await idb.put('tickets', t); added++;
     }
     const noCode = found.filter((f) => !f.code).length;
-    toast(added ? `🎟️ ${added} ticket${added > 1 ? 's' : ''} toegevoegd${noCode ? ` (${noCode} zonder herkende code)` : ''}` : 'Geen nieuwe tickets gevonden');
+    const bad = found.failed?.length ? ` · niet gelukt: ${found.failed.slice(0, 2).join(', ')}${found.failed.length > 2 ? '…' : ''}` : '';
+    toast((added ? `🎟️ ${added} ticket${added > 1 ? 's' : ''} toegevoegd${noCode ? ` (${noCode} zonder herkende code)` : ''}` : 'Geen nieuwe tickets gevonden') + bad, null, bad ? 6000 : undefined);
   } catch (e) {
     console.error(e); toast('Inlezen lukte niet. Probeer een screenshot van de code.');
   }
@@ -2043,10 +2087,11 @@ async function loadChat() {
   try {
     const last = S.chat.at(-1)?.t || 0;
     const fresh = await api(`/api/chat/${S.famId}${last ? `?after=${last - 60e3}` : ''}`);
-    if (fresh.length) {
-      const ids = new Set(S.chat.map((m) => m.id));
+    const ids = new Set(S.chat.map((m) => m.id));
+    const added = fresh.filter((m) => !ids.has(m.id)); // the 60-s overlap brings back messages we already have
+    if (added.length) {
       const before = unread();
-      S.chat = [...S.chat, ...fresh.filter((m) => !ids.has(m.id))].sort((a, b) => a.t - b.t).slice(-300);
+      S.chat = [...S.chat, ...added].sort((a, b) => a.t - b.t).slice(-300);
       cached.save('chat', S.chat);
       if (S.chatOpen) markRead(); else if (unread() > before) buzz([30, 30, 30]);
       renderChatBadge(); if (S.chatOpen) renderChat();
@@ -2176,7 +2221,7 @@ function onboard(step = S.fam ? 'who' : 'start') {
     el.innerHTML = `<form class="ob" id="obForm"><h2>Wie zijn jullie?</h2><p class="muted small">Echte namen maken de suggesties persoonlijk (“Jij en Lotte → Kondaa”).</p>
       ${ps.map((p) => `<label class="obp"><span aria-hidden="true">${emoji(p)}</span><input type="text" name="${p.id}" value="${esc(/^(Volwassene \d|Groot kind|Peuter)$/.test(p.name) ? '' : p.name)}" placeholder="${esc(p.name)}" maxlength="24" autocomplete="off"></label>`).join('')}
       <h3>Wie gebruikt deze gsm?</h3>
-      <div class="seg">${ps.filter((p) => p.kind === 'adult').map((p, i) => `<label class="segopt"><input type="radio" name="me" value="${p.id}" ${meId() === p.id || (!meId() && i === 0) ? 'checked' : ''}> <span>${emoji(p)} ${esc(p.name)}</span></label>`).join('')}</div>
+      <div class="seg">${ps.filter((p) => p.kind === 'adult').map((p, i) => `<label class="segopt"><input type="radio" name="me" value="${p.id}" ${meId() === p.id || (!meId() && p.id === freeAdult()) ? 'checked' : ''}> <span>${emoji(p)} ${esc(p.name)}</span></label>`).join('')}</div>
       <button class="primary big" type="submit">Klaar</button>
       <button type="button" class="ghost small" data-go="obskip">Later</button></form>`;
   }
@@ -2351,7 +2396,7 @@ document.addEventListener('click', async (e) => {
       const plan = S.fam.target?.plan; if (!plan) break;
       if (plan.type === 'split' && !meId()) { toast('Kies eerst wie je bent, dan weet ik welke rij van jullie is'); onboard('who'); break; }
       const i = myIdx(plan), pt = plan.parts[i];
-      if (!(await act({ type: 'queue', part: i, wait: pt?.id ? status(S.live, pt.id).wait ?? pt.wait : null }))) break;
+      if (!(await act({ type: 'queue', part: i, wait: pt?.id && status(S.live, pt.id).known ? status(S.live, pt.id).wait : null }))) break;
       if (S.guide) closeGuide(); scrollTo(0, 0);
       toast('⏳ Rij-modus aan: spelletjes en aftellen op Nu'); break;
     }
@@ -2556,7 +2601,7 @@ addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); pro
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { store.set('tracker', S.tr); if (S.pocket) S.pocketBroke = Date.now(); return; }
   processUploads(); // photos waiting for the app to be open: go on right away
-  if (S.pocket && S.pocketBroke) { S.pocketBroke = 0; toast('Het scherm ging toch uit: in die tijd kreeg de app geen locatie. Ik vul het gat zelf aan.', null, 7000); }
+  if (S.pocket && S.pocketBroke) { S.pocketBroke = 0; S.afterPocket = 'Het scherm ging toch uit: in die tijd kreeg de app geen locatie. Ik vul het gat zelf aan.'; } // shown when the pocket screen opens (no toasts on it)
   loadLive(); pollFamily();
   if (S.guide || !$('#tview').hidden || S.pocket) wake(true); // the system drops the wake lock when the app goes to the background
   // phones pause the location watch in the background and usually resume it; only when no fix came within 8 s start a
@@ -2576,7 +2621,8 @@ async function afterFamily() {
 }
 (async function start() {
   S.outbox = store.get('outbox', []);
-  { const f = store.get('inflight', null); if (f?.aid && !S.outbox.some((x) => x.aid === f.aid)) { S.outbox.unshift(f); store.set('outbox', S.outbox); } store.set('inflight', null); } // the server de-dupes by aid
+  { const m = store.get('inflight', null); const list = (m?.aid ? [m] : Object.values(m || {})).filter((f) => f?.aid && !S.outbox.some((x) => x.aid === f.aid)).sort((a, b) => a.at - b.at);
+    if (list.length) { S.outbox.unshift(...list); store.set('outbox', S.outbox); } store.set('inflight', null); } // the server de-dupes by aid
   S.tickets = (await idb.all('tickets')) || [];
   await loadKeep();
   navigator.storage?.persist?.().catch(() => {});

@@ -278,9 +278,17 @@ export function parkOpen(live, now) {
 
 // The toddler (a child under 110 cm), if any: for the diaper check
 export const toddlerOf = (people) => people.find((p) => p.kind === 'child' && p.height < 110) || null;
-// Time for a diaper check: ≥ 90 min since the last one (or since the day started: opening, else the first ride done)
+// When our day in the park started (0 = unknown): opening time, but never before the family was made, and when the first
+// ride today came well after opening, about 20 min before it (a family that arrives at noon isn't tired at noon)
+export function dayStart(fam, live, now) {
+  const first = fam?.log?.find((l) => now - l.t < 14 * 3600e3)?.t || 0;
+  const made = fam?.created && fam.created <= now && now - fam.created < 14 * 3600e3 ? fam.created : 0;
+  if (!live?.open && !first) return 0; // no schedule and nothing done yet: unknown
+  return Math.max(live?.open || 0, made, first ? first - 20 * 60e3 : 0);
+}
+// Time for a diaper check: ≥ 90 min since the last one or since our day started
 export function diaperDue(fam, live, now) {
-  const start = live?.open || fam?.log?.find((l) => now - l.t < 14 * 3600e3)?.t || 0;
+  const start = dayStart(fam, live, now);
   return start > 0 && now - Math.max(fam?.diaper || 0, start) > 90 * 60e3;
 }
 // The nearest toilet (straight line, m) of [{lat, lon}]
@@ -359,9 +367,8 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo, toi
   }
   // 4. rest for the pregnant adult
   if (!notes.length && prefs.food !== false && !quiet && timeLeft && people.some((p) => p.pregnant)) {
-    // counted from the last meal/pause, or from opening time (no reminder right after arriving); without a schedule
-    // from the first ride done today, else not at all
-    const start = live.open || fam.log?.find((l) => now - l.t < 14 * 3600e3)?.t || now;
+    // counted from the last meal/pause, or from when our day started (dayStart: no reminder right after arriving)
+    const start = dayStart(fam, live, now) || now;
     const lastRest = Math.max(fam.ate || 0, fam.pause || 0, start);
     if (now - lastRest > 100 * 60e3 && since('pause') > 100 * 60e3) {
       memo.sent.pause = now;

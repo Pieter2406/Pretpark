@@ -325,3 +325,20 @@ No accounts; knowing the family id is the access.
   fresh GPS fix is ≤ 45 m from a park toilet (✓ Gedaan → `diaper`; Later = 20 min quiet; 🧭 to the toilet). In a split
   only the phone with the toddler. The cron sends the same as a push (rule 4b, tag `diaper`, at most every 45 min,
   pref `diaper`, shown only with a toddler) using `TOILETS` from worker/owntracks.js and the phone's last position.
+
+## Review round 2 (7 Nov)
+- Queue waits: `queue` only stores a wait the park really posts (`T.posted` / `status().known`); family.js `waitOf` keeps
+  an unknown wait `null` (Number(null) was 0, which made a long gap read as "left the queue"). Guessed waits never feed
+  `waitFactor`.
+- Outbox: waiting actions are re-applied on top of every server copy (`takeFam`), pollFamily no longer pauses while
+  something waits; a head that keeps failing (not offline/401) is skipped after 6 tries; `pp:inflight` is a map by aid.
+- Tickets: code crops ≤ 1000 px (JPEG when the PNG > 800 kB), old oversized crops shrunk before sending, a 413/400
+  (not "too many") marks the ticket `refused` (no endless re-POST); pages without a code only when the file had no code;
+  re-import de-dupes those by source#page; one unreadable file (HEIC on Android) no longer cancels the batch; the server
+  keeps the phone's `created` (import order).
+- "Wie ben jij" preselects an adult no other phone has claimed (`freeAdult`). Map pan uses Math.max (slice). "Is dicht"
+  also greys the map pin and sorts the list (`famStatus`). Guide: arrive < 25 m, leave > 40 m; turn text bands with 8°
+  hysteresis (`turnBand`), buzz ≤ every 3 s; a silent utterance in the opening tap unlocks iOS speech.
+- `phoneOf`: "+32 (0)470…", "+320470…" and "0032…" → "+32470…". Chat re-renders only for new message ids. Live data
+  older than the copy we have is ignored. Rest/diaper timing starts at `dayStart` (opening, but not before the family
+  was made and about 20 min before the first ride today). The pocket "screen went off" note shows after closing pocket.

@@ -409,7 +409,7 @@ async function tickets(request, env, fam, id) {
     if (n.n >= 20) throw fail(400, 'too many tickets');
   }
   await env.DB.prepare('INSERT OR REPLACE INTO tickets (id, family, meta, crop, page, created) VALUES (?, ?, ?, ?, ?, ?)')
-    .bind(t.id, fam, JSON.stringify(meta), t.crop ?? null, t.page ?? null, Date.now()).run();
+    .bind(t.id, fam, JSON.stringify(meta), t.crop ?? null, t.page ?? null, Number.isFinite(t.created) && Math.abs(t.created - Date.now()) < 7 * 864e5 ? Math.round(t.created) : Date.now()).run(); // the phone's import order
   return json({ ok: true }, 201);
 }
 

@@ -16,9 +16,17 @@ export function newFamily(now) {
 }
 
 const str = (s, n = 40) => String(s ?? '').trim().slice(0, n);
-// keeps a leading + and digits only (spaces etc. dropped), 6–16 digits, else empty
-export const phoneOf = (x) => { const t = String(x ?? '').trim(); const d = (t.startsWith('+') ? '+' : '') + t.replace(/\D/g, ''); return /^\+?\d{6,16}$/.test(d) ? d : ''; };
+// keeps a leading + and digits only (spaces etc. dropped), 6–16 digits, else empty. "0032…" → "+32…", and the trunk 0
+// after a neighbour's country code goes ("+32 (0)470…" / "+320470…" would dial a dead number)
+export const phoneOf = (x) => {
+  const t = String(x ?? '').trim().replace(/\(0\)/g, '');
+  let d = (t.startsWith('+') ? '+' : '') + t.replace(/\D/g, '');
+  if (d.startsWith('00')) d = '+' + d.slice(2);
+  d = d.replace(/^\+(31|32|33|44|49|352)0/, '+$1');
+  return /^\+?\d{6,16}$/.test(d) ? d : '';
+};
 const num = (x, lo, hi, d) => { const v = Number(x); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+const waitOf = (w) => (w == null || w === '' ? null : num(w, 0, 300, null)); // a posted wait; unknown stays null (Number(null) is 0)
 const okId = (id) => typeof id === 'string' && !!byId[id]; // attraction or food (favourites, done list)
 const RIDES = new Set(ATTRACTIONS.map((a) => a.id));
 const okRide = (id) => typeof id === 'string' && RIDES.has(id); // attractions only (plans)
@@ -154,9 +162,9 @@ export function apply(fam, act, now) {
       const part = partOf(act, target), old = target.q?.[part];
       target.queued = target.queued || t;
       // the second phone (or a late replay) tapping it again keeps the first start and "aan de beurt"
-      if (old) { if (old.w == null) old.w = num(act.wait, 0, 300, null); break; }
+      if (old) { if (old.w == null) old.w = waitOf(act.wait); break; }
       // auto: started by the location detection (only those may also be ended by it)
-      target.q = { ...(target.q || {}), [part]: { t, w: num(act.wait, 0, 300, null), g: {}, ...(act.auto === true ? { auto: true } : {}) } };
+      target.q = { ...(target.q || {}), [part]: { t, w: waitOf(act.wait), g: {}, ...(act.auto === true ? { auto: true } : {}) } };
       break;
     }
     // left the queue without riding (tapped, or detected: back out of the ride area after a couple of minutes)

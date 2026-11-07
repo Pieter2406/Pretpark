@@ -65,13 +65,15 @@ function cropCode(src, pos, linear) {
   const m = Math.max(x1 - x0, y1 - y0) * 0.12 + 10; // quiet zone
   x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(src.width, x1 + m); y1 = Math.min(src.height, y1 + m);
   const w = x1 - x0, h = y1 - y0;
-  const up = Math.max(1, Math.ceil(700 / Math.max(w, h)));
-  const c = canvasOf(w * up, h * up);
+  // small codes are enlarged with sharp pixels; big ones (a phone photo) shrunk to ≤ 1000 px so the server takes them
+  const k = Math.max(w, h) > 1000 ? 1000 / Math.max(w, h) : Math.max(1, Math.ceil(700 / Math.max(w, h)));
+  const c = canvasOf(w * k, h * k);
   const ctx = c.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
+  ctx.imageSmoothingEnabled = k < 1;
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   ctx.drawImage(src, x0, y0, w, h, 0, 0, c.width, c.height);
-  return c.toDataURL('image/png');
+  const png = c.toDataURL('image/png');
+  return png.length < 800_000 ? png : c.toDataURL('image/jpeg', 0.92); // a noisy photo makes a huge PNG
 }
 
 // Returns [{ code, format, crop, page, pageNo, source }]
@@ -79,11 +81,14 @@ export async function readTickets(files, onProgress = () => {}) {
   const zx = await loadZx();
   const found = [];
   let n = 0;
+  const failed = [];
   for (const file of files) {
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     onProgress(`${file.name} openen…`);
     let i = 0;
-    for await (const c of isPdf ? pdfPages(file) : imagePages(file)) {
+    const before = found.length;
+    // one unreadable file (e.g. a HEIC on Android) never cancels the others
+    try { for await (const c of isPdf ? pdfPages(file) : imagePages(file)) {
       onProgress(`Codes zoeken (${++n})…`);
       const data = c.getContext('2d').getImageData(0, 0, c.width, c.height);
       const results = (await zx.readBarcodesFromImageData(data, { tryHarder: true, maxNumberOfSymbols: 10, formats: [] }))
@@ -95,9 +100,14 @@ export async function readTickets(files, onProgress = () => {}) {
         const linear = !/QR|Aztec|DataMatrix|PDF417|MaxiCode/i.test(r.format);
         found.push({ code: r.text, format: r.format, crop: cropCode(c, r.position, linear), page, pageNo: i, source: file.name });
       }
-    }
+    } } catch (e) { console.error(e); failed.push(file.name); found.length = before; continue; }
+    // pages without a code (terms, ads) only count when the whole file has no code at all
+    const mine = found.slice(before);
+    if (mine.some((t) => t.code)) found.splice(before, found.length - before, ...mine.filter((t) => t.code));
   }
   // one ticket per code (the same code on two pages is still one ticket)
   const seen = new Set();
-  return found.filter((t) => !t.code || (!seen.has(t.code) && seen.add(t.code)));
+  const out = found.filter((t) => !t.code || (!seen.has(t.code) && seen.add(t.code)));
+  out.failed = failed;
+  return out;
 }
