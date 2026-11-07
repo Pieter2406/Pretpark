@@ -2,7 +2,7 @@
 // (family.js actions, versioned by `updated`); wait times come from /api/live; walking routes from route.js.
 import './compat.js'; // first: fallbacks for older iPhones
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
-import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor, markedClosed, toddlerOf, diaperDue, nearestToilet } from './logic.js';
+import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor, markedClosed, toddlerOf, diaperDue, nearestToilet, COOL } from './logic.js';
 import { QUESTS, FACTS } from './fun.js';
 import { freshTracker, addFix, detect, farState } from './activity.js';
 import { makePark, pathLength, bearingXY } from './route.js';
@@ -1361,7 +1361,7 @@ function rideSheet(id) {
   };
   const favs = S.fam.favs || [];
   openSheet(`${photoSrc(a) ? `<div class="ride-photo"><img src="${photoSrc(a)}" alt="${esc(a.name)}"><span class="cr">${credit(a)}</span></div>` : ''}<div style="display:flex;gap:12px;align-items:center"><span style="font-size:2.4rem" aria-hidden="true">${a.icon}</span><div style="flex:1"><h2>${esc(a.name)}</h2>
-      <span class="muted small">${{ kids: 'Kinderattractie', family: 'Gezinsattractie', thrill: 'Spanning' }[a.cat]} · ${mins(walkOf(a))} stappen</span></div>${waitBadge(id)}</div>
+      <span class="muted small">${COOL[a.name] === 1 ? '🔥 Topper · ' : COOL[a.name] ? '🔥 Aanrader · ' : ''}${{ kids: 'Kinderattractie', family: 'Gezinsattractie', thrill: 'Spanning' }[a.cat]} · ${mins(walkOf(a))} stappen</span></div>${waitBadge(id)}</div>
     <ul class="notes" style="margin-top:12px">${people().map((p) => `<li><span aria-hidden="true">${emoji(p)}</span><span><b>${esc(p.name)}</b> (${num(p.height)} cm): ${rule(p)}</span></li>`).join('')}</ul>
     ${a.wet ? '<p class="small">💧 Je kan nat worden.</p>' : ''}
     <p class="muted small">Min. ${a.alone ?? '–'} cm alleen${a.withAdult ? `, ${a.withAdult} cm met volwassene` : ''}${a.max ? `, max. ${a.max} cm` : ''}. Check het bordje aan de ingang.</p>

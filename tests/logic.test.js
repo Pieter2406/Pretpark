@@ -185,3 +185,13 @@ test('round 1: notifications never invent a wait, skip the chosen plan, and see 
   const r2 = decideNotifications({ fam: f2, deviceId: DEV, live: { ...run, rides: { ...run.rides, [k.id]: { s: 'CLOSED', w: null } } }, now: NOW, prefs, memo: r1.memo });
   assert.ok(r2.notes.some((n) => n.tag === 'down'), 'CLOSED after running = breakdown');
 });
+
+test('toppers first: with equal waits and walks, two adults get a headliner suggested', async () => {
+  const { COOL, coolOf } = await import('../public/logic.js');
+  assert.equal(coolOf({ name: 'Kondaa' }) > coolOf({ name: 'Cobra' }), true);
+  assert.equal(coolOf({ name: 'Cobra' }) > coolOf({ name: 'Octopus' }), true);
+  const adults = DEFAULT_PEOPLE.filter((p) => p.kind === 'adult' && !p.pregnant).concat([{ id: 'p9', name: 'B', kind: 'adult', height: 180 }]);
+  const live = { rides: Object.fromEntries(ATTRACTIONS.map((a) => [a.id, { s: 'OPERATING', w: 10 }])), minutesLeft: 400 };
+  const best = plans({ people: adults, live, walk: () => 150, done: {}, favs: [], month: 10 })[0];
+  assert.equal(COOL[byId[best.parts[0].id].name], 1, byId[best.parts[0].id].name);
+});

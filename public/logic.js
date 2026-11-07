@@ -139,7 +139,14 @@ export function crowdCurve(min) {
 // clearly more than simply weighting waits heavier (+3–6%). Stronger values gained a little more but made the
 // pregnant adult walk more and ride less on busy days. Needs ctx.clock = { now, close } in minutes since midnight
 // (park time); without it (or without a schedule) the factor is 1. waitWeight stays 1 (kept for experiments).
-export const TUNE = { urgency: 4, waitWeight: 1 };
+export const TUNE = { urgency: 4, waitWeight: 1, cool: 1 };
+// The park's toppers: worth more than their category alone says (tier 1 = the headliners people come for, tier 2 =
+// strong rides). A ride's value × coolOf(a) = 1 + TUNE.cool × (1 | 0.5); tuned with sim/simulate.mjs.
+export const COOL = {
+  Kondaa: 1, Pulsar: 1, 'Calamity Mine': 1, 'Tiki-Waka': 1, 'Loup-Garou': 1, 'Challenge of Tutankhamon': 1, 'Popcorn Revenge': 1,
+  Vampire: 2, Turbine: 2, Cobra: 2, 'Dalton Terror': 2, Mecalodon: 2, Buzzsaw: 2, 'Radja River': 2, Kondaala: 2, 'Fun Pilot': 2,
+};
+export const coolOf = (a) => 1 + TUNE.cool * ({ 1: 1, 2: 0.5 }[COOL[a?.name]] || 0);
 // park time in minutes since midnight, from /api/live (localTime is Brussels wall-clock written as UTC)
 export function parkClock(live, nowMs = Date.now()) {
   if (!live?.localTime || live.minutesLeft == null) return null;
@@ -179,6 +186,7 @@ function scoreOne(group, a, ctx, extraWalkM = 0) {
   let value = ride.reduce((s, p) => s + enjoy(p, a, ctx.month) * RATE_MUL[ctx.rates?.[a.id]?.[p.id] ?? 2], 0) - watch.reduce((s, p) => s + (p.kind === 'child' ? 1.5 : 0.7), 0);
   const done = ctx.done?.[a.id] || 0;
   value *= Math.pow(0.35, done);
+  value *= coolOf(a); // the toppers first (a second ride on one still decays like any other)
   if (ctx.favs?.includes(a.id)) value *= 2;
   if (ctx.rain) value *= a.indoor ? 1.6 : a.wet ? 0.5 : 0.85; // raining now: prefer indoor rides
   if (value <= 0.2) return null;

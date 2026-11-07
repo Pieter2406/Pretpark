@@ -137,7 +137,7 @@ No accounts; knowing the family id is the access.
 
 ## Non-obvious decisions
 - Wait times only exist for rides ThemeParks.wiki reports; a ride missing from live data is treated as closed.
-- Score = family enjoyment (per person/category, watchers cost, wet rides penalised Oct–Mar, favourites ×2, done ×0.35ⁿ)
+- Score = family enjoyment (per person/category, watchers cost, wet rides penalised Oct–Mar, toppers ×`coolOf`, favourites ×2, done ×0.35ⁿ)
   divided by minutes (walk × 1.25 with a pregnant adult × WALK_WEIGHT + wait + ride).
 - The Worker has no path graph: it uses straight-line × 1.35 for walking times in notifications.
 - `localTime` in /api/live is Brussels wall-clock written as UTC so `getHours()` works inside the Worker.
@@ -411,3 +411,11 @@ No accounts; knowing the family id is the access.
   and every 10 min; when the new worker is activated it reloads at once if `calmMoment()` (no sheet/guide/chat/pocket,
   nothing being typed, no upload/import running), else on the next return to the front. The very first install
   never reloads. Tested by changing VERSION under a live page (Chromium + WebKit).
+
+## Toppers first (7 Nov)
+- `COOL` in logic.js: tier 1 = headliners (Kondaa, Pulsar, Calamity Mine, Tiki-Waka, Loup-Garou, Challenge of
+  Tutankhamon, Popcorn Revenge), tier 2 = strong rides (Vampire, Turbine, Cobra, Dalton Terror, Mecalodon, Buzzsaw,
+  Radja River, Kondaala, Fun Pilot). Value × `coolOf(a)` = 1 + `TUNE.cool` × (1 | 0.5), `TUNE.cool = 1`. Ride sheet shows
+  "🔥 Topper" / "🔥 Aanrader". Sim (20 days; normal / busy / breakdowns / flat): different headliners per day 4.3 → 6.1,
+  person-rides on toppers +27–34%, rides per person −1.5 (−5%), +15 min queueing, +0.4 km; pregnant adult and toddler
+  ≈ unchanged. 0.6 was the milder option (+18–27% toppers, −0.6 rides). The sim reports `coolRides` / `cool1`.

@@ -4,7 +4,7 @@
 // Nothing here is published (outside public/).
 import fs from 'node:fs';
 import { ATTRACTIONS, FOOD, ENTRANCE } from '../public/data.js';
-import { plans, canRide, riders, enjoy, DEFAULT_PEOPLE, splitGroups, distM, foodOptions } from '../public/logic.js';
+import { plans, canRide, riders, enjoy, DEFAULT_PEOPLE, splitGroups, distM, foodOptions, COOL } from '../public/logic.js';
 import { makePark, pathLength } from '../public/route.js';
 
 const park = makePark(JSON.parse(fs.readFileSync(new URL('../public/park.json', import.meta.url))));
@@ -91,7 +91,7 @@ export function simulateDay(strategy, { seed = 1, people = DEFAULT_PEOPLE, favs 
   const byId = Object.fromEntries(ATTRACTIONS.map((a) => [a.id, a]));
   const pregnant = people.some((p) => p.pregnant);
   const m = { rides: 0, fun: Object.fromEntries(people.map((p) => [p.id, 0])), rideCount: Object.fromEntries(people.map((p) => [p.id, 0])),
-    idle: Object.fromEntries(people.map((p) => [p.id, 0])), walked: Object.fromEntries(people.map((p) => [p.id, 0])), wait: 0, walkM: 0, splits: 0, rests: 0, violations: [], log: [], repeats: 0, wetInRain: 0 };
+    idle: Object.fromEntries(people.map((p) => [p.id, 0])), walked: Object.fromEntries(people.map((p) => [p.id, 0])), wait: 0, walkM: 0, splits: 0, rests: 0, violations: [], log: [], repeats: 0, wetInRain: 0, coolRides: 0, cool1: new Set() };
   const done = {};
   let min = arrive, here = ENTRANCE, ate = { lunch: false, dinner: false }, lastPause = arrive;
   const walkFor = (from, to, slow) => { const d = pathLength(park.fromHere(from).path(to)); return { d, t: (d / 60) * (slow ? 1.25 : 1) }; };
@@ -144,7 +144,8 @@ export function simulateDay(strategy, { seed = 1, people = DEFAULT_PEOPLE, favs 
       if (done[a.id]) m.repeats++;
       done[a.id] = (done[a.id] || 0) + 1;
       m.rides++;
-      for (const id of part.ride) { const p = people.find((x) => x.id === id); m.fun[id] += enjoy(p, a, MONTH); m.rideCount[id]++; }
+      for (const id of part.ride) { const p = people.find((x) => x.id === id); m.fun[id] += enjoy(p, a, MONTH); m.rideCount[id]++; if (COOL[a.name]) m.coolRides++; }
+      if (COOL[a.name] === 1) m.cool1.add(a.id);
       m.log.push(`${String(Math.floor(arriveAt / 60)).padStart(2, '0')}:${String(Math.floor(arriveAt % 60)).padStart(2, '0')} ${plan.type === 'split' ? '[split] ' : ''}${a.name} (${wait}′) ${part.ride.map((id) => people.find((x) => x.id === id).name.slice(0, 3)).join('+')}`);
     }
     // whoever isn't riding during the slot is idle for its length (watching or resting)
@@ -171,10 +172,12 @@ function avg(strategy, opts, days) {
   return {
     rides: mean((r) => r.rides), fun: mean((r) => r.totalFun), wait: mean((r) => r.wait), walk: mean((r) => r.walkKm),
     splits: mean((r) => r.splits), rests: mean((r) => r.rests), repeats: mean((r) => r.repeats), wetInRain: mean((r) => r.wetInRain),
+    coolRides: mean((r) => r.coolRides), cool1: mean((r) => r.cool1.size),
     per: Object.fromEntries(people.map((p) => [p.name, { rides: mean((r) => r.rideCount[p.id]), fun: mean((r) => r.fun[p.id]), idle: mean((r) => r.idle[p.id]), km: mean((r) => r.walkedKm[p.id]) }])),
     violations: runs.flatMap((r) => r.violations),
   };
 }
+export { avg };
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop())) {
   const days = Number(process.argv[2]) || 40;
   const scenarios = {
