@@ -190,8 +190,8 @@ async function otReceive(request, env, ctx, token) {
   if (!fixes.length) {
     // OwnTracks reached us but sent no location (e.g. its "status" message on connect): remember the contact, so the
     // app can say "connected, now choose Actie and tap ↑" instead of "nothing received"
-    const old = (() => { try { return JSON.parse(row.info || '{}'); } catch { return {}; } })();
-    await env.DB.prepare('UPDATE ot SET info = ? WHERE token = ?').bind(JSON.stringify({ ...old, contact: now, types: otTypes(text) }), token).run();
+    // one atomic update of just these two fields: a location saved in parallel is never overwritten by an old copy
+    await env.DB.prepare("UPDATE ot SET info = json_set(coalesce(info, '{}'), '$.contact', ?, '$.types', json(?)) WHERE token = ?").bind(now, JSON.stringify(otTypes(text)), token).run();
     return;
   }
   const tr = freshTracker(JSON.parse(row.tracker || 'null'), fixes[0].t);

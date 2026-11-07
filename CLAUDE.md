@@ -267,3 +267,14 @@ No accounts; knowing the family id is the access.
 - OwnTracks (iOS 27) first POSTs a `_type: status` message on connect (no location); the receiver then stores
   `info.contact` + `info.types`, and the view says "verbonden, maar nog geen locatie: kies Actie en tik ↑". A phone left
   on "Significant" (`monitoring=1` in its log) sends locations only after moving a few hundred metres.
+
+## Location check (Gezin › 📍 Locatie-check)
+- One row per person (all devices of that person merged: Safari and the iPhone home-screen app are separate devices):
+  OwnTracks (last fix, accuracy, battery, "Actie?" hint after 10 min, or "verbonden, nog geen locatie"), for yourself
+  the app GPS (last good fix, accuracy, counts of good/ignored fixes per reason, "ongeveer" warning) and the last
+  automatic recognition. 🟢 < 10 min · 🟠 10–30 · 🔴 OwnTracks linked but silent · ⚪ only while the app is open.
+  Refreshes every 30 s on the tab; `/api/otsetup/<family>?all=1` (behind Access, no tokens) every minute while someone
+  uses OwnTracks or the tab is open, else every 10 min.
+- Banner "Geen locatie van X sinds …" when another person's OwnTracks is linked and their newest position (any device)
+  is > 30 min old during opening hours, not within 45 min of a meal/pause; dismissable per silence (`loc:<pid>:<t>`).
+- A status-only OwnTracks post updates `info.contact/types` with one `json_set` (never overwrites a newer location).

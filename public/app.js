@@ -165,7 +165,8 @@ async function loadLive() {
   recompute(); render();
 }
 async function loadOtAll() {
-  if (!S.famId || Date.now() - S.otAllAt < 55e3) return;
+  // every minute while someone uses OwnTracks or the Gezin tab is open, else every 10 min
+  if (!S.famId || Date.now() - S.otAllAt < (S.otAll?.length || S.tab === 'fam' ? 55e3 : 600e3)) return;
   S.otAllAt = Date.now();
   try { S.otAll = (await api(`/api/otsetup/${S.famId}?all=1`)).links || []; renderBanners(); if (S.tab === 'fam') renderLocCheck(); } catch { /* next time */ }
 }
@@ -232,7 +233,7 @@ function onGps(p) {
     if (S.pocket) renderPocket();
     return;
   }
-  S.gpsReject = ''; S.gpsStats.ok++;
+  S.gpsReject = ''; S.gpsStats.ok++; S.gpsGoodAt = Date.now();
   usePosition({ lat: r.pos.lat, lon: r.pos.lon, acc: r.pos.acc }, c, true, r.pos);
   runDetect(r.gap);
 }
@@ -1522,57 +1523,68 @@ function renderOt() {
     ${st?.active ? '<div class="row2"><button data-go="otstop">⏹️ Stoppen met volgen</button><button data-go="otnew">🔄 Nieuwe koppeling</button></div>' : ''}`;
 }
 
-// ---------- location check: per phone of the family, is location coming in? (Gezin card + a banner for the partner)
+// ---------- location check: per person of the family, is location coming in? (Gezin card + a banner for the partner)
+// One person can have several "devices" (Safari and the iPhone home-screen app have separate storage, an old
+// browser…), so everything is merged per person: their newest position from any of their devices.
 const ago = (t) => { const m = Math.round((Date.now() - t) / 60e3); return m < 1 ? 'net nu' : m < 60 ? `${m} min geleden` : `om ${hhmm(t)}`; };
 const REJ = { acc: 'te onnauwkeurig', jump: 'onmogelijke sprong', stale: 'te oud', old: 'dubbel', approx: '“ongeveer”', bad: 'ongeldig' };
-// newest known position of a phone: what the server has (app or OwnTracks) and what OwnTracks reported
-function phoneLoc(dev) {
-  const pos = S.fam?.positions?.[dev]?.t || 0;
-  const ot = (S.otAll || []).find((l) => l.device === dev) || null;
-  return { pos, ot, otT: ot?.info?.t || 0, newest: Math.max(pos, ot?.info?.t || 0) };
+function personLoc(pid) {
+  const devs = Object.keys(S.fam?.me || {}).filter((d) => S.fam.me[d] === pid);
+  if (pid === meId() && !devs.includes(device)) devs.push(device);
+  const links = (S.otAll || []).filter((l) => devs.includes(l.device));
+  const ot = links.sort((x, y) => (y.info?.t || y.info?.contact || 0) - (x.info?.t || x.info?.contact || 0))[0] || null;
+  const pos = Math.max(0, ...devs.map((d) => S.fam?.positions?.[d]?.t || 0));
+  const otT = ot?.info?.t || 0;
+  return { devs, ot, pos, otT, newest: Math.max(pos, otT) };
 }
-function locLevel(dev) {
-  const { newest, ot } = phoneLoc(dev);
-  const age = Date.now() - newest;
-  if (dev === device && S.gps && Date.now() - S.gpsAt < 2 * 60e3) return 'ok';
+function locLevel(pid) {
+  const { newest, ot } = personLoc(pid);
+  if (pid === meId() && S.gpsGoodAt && Date.now() - S.gpsGoodAt < 2 * 60e3) return 'ok';
   if (!newest) return ot ? 'bad' : 'off';
+  const age = Date.now() - newest;
   return age < 10 * 60e3 ? 'ok' : age < 30 * 60e3 ? 'warn' : ot ? 'bad' : 'off';
 }
 function renderLocCheck() {
-  const el = $('#locCheck'); if (!el || !S.fam) return;
-  const devs = [...new Set([device, ...Object.keys(S.fam.me || {})])].filter((d) => d === device || S.fam.me?.[d]);
+  const el = $('#locCheck'); if (!el) return;
+  el.hidden = !S.fam; if (!S.fam) return;
+  // the people who have a phone in this family (this phone's person first)
+  const pids = [...new Set([meId(), ...Object.values(S.fam.me || {})].filter((x) => x && person(x)))];
   const dot = { ok: '🟢', warn: '🟠', bad: '🔴', off: '⚪' };
-  const rows = devs.map((d) => {
-    const p = person(S.fam.me?.[d]);
-    const { pos, ot, otT } = phoneLoc(d);
+  const rows = pids.map((pid) => {
+    const p = person(pid);
+    const { pos, ot, otT } = personLoc(pid);
     const lines = [];
     if (ot) {
       const i = ot.info || {};
-      lines.push(otT ? `📡 OwnTracks: ${ago(otT)}${i.acc != null ? ` · ±${i.acc} m` : ''}${i.batt != null ? ` · 🔋 ${i.batt}%` : ''}${Date.now() - otT > 10 * 60e3 ? ' · staat OwnTracks op <b>Actie</b>?' : ''}`
+      lines.push(otT ? `📡 OwnTracks: ${ago(otT)}${i.acc != null ? ` · ±${num(i.acc)} m` : ''}${i.batt != null ? ` · 🔋 ${num(i.batt)}%` : ''}${Date.now() - otT > 10 * 60e3 ? ' · staat OwnTracks op <b>Actie</b>?' : ''}`
         : i.contact ? `📡 OwnTracks verbonden (${ago(i.contact)}), nog geen locatie: kies <b>Actie</b> en tik ↑` : '📡 OwnTracks gekoppeld, nog niets ontvangen');
     } else lines.push('📡 OwnTracks: niet gekoppeld <span class="muted">(volgt alleen als Pretpark open is)</span>');
-    if (d === device) {
+    if (pid === meId()) {
       const st = S.gpsStats, rej = Object.entries(st).filter(([k, v]) => REJ[k] && v).map(([k, v]) => `${v}× ${REJ[k]}`);
       lines.push(S.sim === 'off' ? '🛰️ GPS in de app: <b>locatie staat uit</b>'
-        : S.gps ? `🛰️ GPS in de app: ${ago(S.gpsAt)} · ±${Math.round(S.gps.acc || 0)} m · ${st.ok} goed${rej.length ? `, genegeerd: ${rej.join(', ')}` : ''}` : '🛰️ GPS in de app: nog geen locatie');
-      if (Date.now() - S.tr.approx < 10 * 60e3) lines.push('⚠️ “Ongeveer”-locatie: zet <b>Exacte locatie</b> aan');
+        : S.gpsGoodAt ? `🛰️ GPS in de app: ${ago(S.gpsGoodAt)} · ±${Math.round(S.gps?.acc || 0)} m · ${st.ok} goed${rej.length ? `, genegeerd: ${rej.join(', ')}` : ''}`
+        : `🛰️ GPS in de app: nog geen goede locatie${rej.length ? ` (genegeerd: ${rej.join(', ')})` : ''}`);
+      if (Date.now() - (S.tr.approx || 0) < 10 * 60e3) lines.push('⚠️ “Ongeveer”-locatie: zet <b>Exacte locatie</b> aan');
       const a = S.autoLog[0];
       lines.push(S.auto ? `🤖 Herkenning: ${a ? `${esc(a.text)} (${hhmm(a.t)})` : 'nog niets herkend'}` : '🤖 Herkenning staat uit');
     } else if (pos) lines.push(`📍 Laatste positie bij de server: ${ago(pos)}`);
-    return `<div class="locrow"><div class="locwho">${dot[locLevel(d)]} <b>${p ? `${emoji(p)} ${esc(p.name)}` : 'Onbekend'}</b>${d === device ? ' <span class="muted">(deze gsm)</span>' : ''}</div>
+    return `<div class="locrow"><div class="locwho">${dot[locLevel(pid)]} <b>${emoji(p)} ${esc(p.name)}</b>${pid === meId() ? ' <span class="muted">(jij)</span>' : ''}</div>
       <ul class="small">${lines.map((l) => `<li>${l}</li>`).join('')}</ul></div>`;
-  }).join('');
+  }).join('') || '<p class="small muted">Kies op elke gsm “wie ben jij” om hier iedereen te zien.</p>';
   el.innerHTML = `<h2>📍 Locatie-check</h2>${rows}
     <p class="small muted" style="margin:6px 0 0">🟢 locatie van de laatste 10 min · 🟠 10–30 min · 🔴 OwnTracks gekoppeld maar stil · ⚪ alleen als de app open is.</p>
     <button class="ghost small" data-go="loccheck" style="width:100%">🔄 Vernieuwen</button>`;
 }
-// the partner's phone is linked to OwnTracks but went silent: say so (once per silence, dismissable)
+// someone else's OwnTracks went silent for 30 min during opening hours (not right after eating or a pause: sitting
+// still, OwnTracks sends less): say so, once per silence, dismissable
 function partnerSilent() {
-  if (!S.fam || !S.otAll || !S.live?.open || Date.now() < S.live.open || (S.live.close && Date.now() > S.live.close)) return null;
-  for (const l of S.otAll) {
-    if (l.device === device || !S.fam.me?.[l.device] || !l.info?.t) continue;
-    const { newest } = phoneLoc(l.device);
-    if (Date.now() - newest > 15 * 60e3) return { dev: l.device, t: newest, who: person(S.fam.me[l.device]) };
+  const L = S.live, f = S.fam;
+  if (!f || !S.otAll?.length || !L?.open || Date.now() < L.open || (L.close && Date.now() > L.close)) return null;
+  if (Date.now() - Math.max(f.ate || 0, f.pause || 0) < 45 * 60e3) return null;
+  const pids = [...new Set((S.otAll || []).map((l) => f.me?.[l.device]).filter((pid) => pid && pid !== meId() && person(pid)))];
+  for (const pid of pids) {
+    const { newest, otT } = personLoc(pid);
+    if (otT && Date.now() - newest > 30 * 60e3) return { pid, t: newest, who: person(pid) };
   }
   return null;
 }
@@ -2024,8 +2036,8 @@ function renderBanners() {
     b.push(['closing', '⏰', `<b>Nog ${Math.round((L.close - Date.now()) / 60e3)} min open.</b> Tijd voor de laatste ronde${S.fam?.car ? ', daarna brengt 🚗 Auto je terug' : ''}.`]);
   }
   const ps = partnerSilent();
-  if (ps && !S.dismissed['loc:' + ps.dev + ':' + ps.t]) {
-    b.push(['loc:' + ps.dev + ':' + ps.t, '📍', `<b>Geen locatie van ${esc(ps.who?.name || 'de andere gsm')} sinds ${ps.t ? hhmm(ps.t) : 'lang'}.</b> Staat OwnTracks daar nog op Actie? Bel even via 🆘 als je ze zoekt.`]);
+  if (ps && !S.dismissed['loc:' + ps.pid + ':' + ps.t]) {
+    b.push(['loc:' + ps.pid + ':' + ps.t, '📍', `<b>Geen locatie van ${esc(ps.who?.name || 'de andere gsm')} sinds ${ps.t ? hhmm(ps.t) : 'lang'}.</b> Staat OwnTracks daar nog op Actie? Bel even via 🆘 als je ze zoekt.`]);
   }
   if (isDark() && new Date().getMonth() >= 9 && hasToddler() && !S.dismissed['night' + new Date().toDateString()]) {
     b.push(['night' + new Date().toDateString(), '🎃', '<b>Donker: scare zones.</b> Met de peuter op de brede paden blijven. Te eng? Hand op en “stop” zeggen.', 'night']);
