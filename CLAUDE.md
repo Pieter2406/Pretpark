@@ -453,3 +453,10 @@ No accounts; knowing the family id is the access.
   pageshow and orientationchange. Test: scratchpad tabbar.js (Chromium + WebKit; the real keyboard can't be emulated).
 - Marjan's phone (Android 10, Chrome 156) reported via `album-state`: 16 on the server, 2 kept, 0 waiting — her missing
   photos never entered the app (camera killed the tab before this detection existed); they can't be recovered.
+
+## "Geen bereik" only when it lasts (7 Nov)
+- Pieter saw "Geen bereik" on 5G in a queue: diag showed the album request failing right when the app restarted for an
+  update (an iPhone that just came back to the front often fails its first requests); 10 s later requests worked.
+  Now `api()` retries a failed GET once after 1.5 s; `netFail()` shows the banner only after ≥ 2 failures over ≥ 8 s;
+  `netOk()` (any working api call or photo upload) clears it at once and re-renders the banners/album.
+  Test: scratchpad offline.js (blip → no banner, outage → banner, back → gone; Chromium + WebKit).

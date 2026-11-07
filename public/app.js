@@ -113,18 +113,34 @@ const hasToddler = () => people().some((p) => p.kind === 'child' && p.height < 1
 // Errors: e.offline (no network or too slow), e.status 401 (Cloudflare Access session expired: log in again)
 // AbortSignal.timeout exists from iOS 16: older phones get the same with a controller and a timer
 const timeoutSignal = (ms) => { if (AbortSignal.timeout) return AbortSignal.timeout(ms); const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal; };
+// "Geen bereik" only when it lasts: an iPhone that just came back to the front (or restarted for an update) often fails
+// its first requests for a second or two (7 Nov, Pieter in the Dalton Terror queue on 5G). A failed GET is tried once
+// more after 1.5 s; the banner needs ≥ 2 failures over ≥ 8 s and goes away at the first request that works.
+let netFails = 0, netSince = 0;
+function netFail() {
+  netFails++; netSince ||= Date.now();
+  if (!S.offline && netFails >= 2 && Date.now() - netSince >= 8e3) { S.offline = true; renderBanners(); }
+}
+function netOk() {
+  const was = S.offline; netFails = 0; netSince = 0; S.offline = false;
+  if (was) { renderBanners(); if (S.tab === 'album') renderAlbum(); }
+}
 async function api(path, opts = {}) {
   let res;
-  try {
-    res = await fetch(path, {
-      ...opts, redirect: 'manual', signal: timeoutSignal(opts.timeout || 7000),
-      headers: { 'content-type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-  } catch {
-    S.offline = true;
-    throw Object.assign(new Error('offline'), { offline: true });
+  const get = !opts.method || opts.method === 'GET';
+  const go = () => fetch(path, {
+    ...opts, redirect: 'manual', signal: timeoutSignal(opts.timeout || 7000),
+    headers: { 'content-type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  try { res = await go(); } catch (e) {
+    let again = false;
+    if (get && !opts.once) { await new Promise((r) => setTimeout(r, 1500)); try { res = await go(); again = true; } catch { /* below */ } }
+    if (!again) {
+      netFail();
+      throw Object.assign(new Error('offline'), { offline: true });
+    }
   }
-  S.offline = false;
+  netOk();
   if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); throw Object.assign(new Error('auth'), { status: 401 }); }
   S.auth = false;
   const data = await res.json().catch(() => ({}));
@@ -2110,6 +2126,7 @@ async function putPhoto(u, file, ms) {
     const r = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'PUT', body: file, redirect: 'manual', signal: timeoutSignal(ms),
       headers: { 'content-type': file.type || 'image/jpeg', 'x-pretpark-size': String(file.size), 'x-pretpark-meta': encodeURIComponent(JSON.stringify(u.meta)) } });
     if (!r.ok) diag('up-http', `${u.id} full PUT ${file.size} B: ${r.status} ${r.type} ${(await r.clone().text().catch(() => '')).slice(0, 200)}`);
+    netOk();
     return r;
   } catch (e) {
     diag('up-fail', `${u.id} full PUT ${file.size} B after ${Math.round((Date.now() - t0) / 1000)} s: ${e?.name} ${e?.message} · online=${navigator.onLine}`);
@@ -2121,6 +2138,7 @@ async function postPhoto(u, fd, ms) {
   try {
     const r = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual', signal: timeoutSignal(ms) });
     if (!r.ok) diag('up-http', `${u.id} ${fd.has('full') ? 'full' : 'thumb'}: ${r.status} ${r.type} ${(await r.clone().text().catch(() => '')).slice(0, 260)}`);
+    netOk();
     return r;
   } catch (e) { // no signal or too slow: try again later
     diag('up-fail', `${u.id} ${fd.has('full') ? 'full' : 'thumb'} after ${Math.round((Date.now() - t0) / 1000)} s: ${e?.name} ${e?.message} · online=${navigator.onLine}`);
@@ -2161,7 +2179,7 @@ async function processUploads() {
       items.push({ u, k });
     }
     const fail = (res) => {
-      if (!res) { S.offline = true; return true; }
+      if (!res) { netFail(); return true; }
       if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); return true; }
       if (res.status === 503) { S.albumOff = true; return true; }
       return false;
