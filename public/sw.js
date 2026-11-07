@@ -6,7 +6,7 @@
 // - /api/* is never cached here: app.js keeps its own last copies (localStorage, IndexedDB).
 // LAZY: a hash of vendor/ + img/ (set by scripts/stamp-sw.mjs): a new pdf.js, reader or ride photo reaches every phone
 const LAZY = 'pretpark-lazy-940f4763f6';
-const VERSION = 'pretpark-769f025ec918';
+const VERSION = 'pretpark-fd3b8eb33f58';
 const SHELL = [
   '/', '/style.css', '/app.js', '/logic.js', '/data.js', '/route.js', '/family.js', '/idb.js', '/tickets.js',
   '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js', '/fun.js', '/activity.js', '/compat.js', '/shows.js',
