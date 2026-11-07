@@ -1467,6 +1467,7 @@ function otState() {
     : !st.active ? '<div class="otstate">⚪ Nog niet gekoppeld.</div>'
     : fresh ? `<div class="otstate ok">✅ <b>Verbonden.</b> Laatste locatie ${hhmm(info.t)} (±${info.acc ?? '?'} m${info.batt != null ? `, batterij ${info.batt}%` : ''}). Je mag Pretpark nu sluiten.</div>`
     : info.t ? `<div class="otstate warn">⚠️ Laatste locatie om ${hhmm(info.t)}: al een tijd niets. Staat OwnTracks bovenaan op <b>Actie</b> en mag het <b>altijd</b> je locatie gebruiken?</div>`
+    : info.contact ? `<div class="otstate warn">🔗 <b>OwnTracks is verbonden</b> (laatste contact ${hhmm(info.contact)}), maar stuurde nog geen locatie. Kies in OwnTracks bovenaan <b>Actie</b> (niet “Significant”) en tik op <b>↑</b>.</div>`
     : '<div class="otstate">⏳ Gekoppeld, wacht op de eerste locatie. Tik in OwnTracks op <b>↑</b> (publiceer) om te testen.</div>';
 }
 function renderOt() {

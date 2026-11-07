@@ -264,3 +264,6 @@ No accounts; knowing the family id is the access.
   allowed"); the user must first enable `allowConfigurationByURIAndConfigFile` in OwnTracks › ⓘ › Instellingen (a link
   can't change it). So the view shows the manual way first (copy the link; Modus HTTP, URL; choose **Actie** = Move in
   the Dutch app) and the one-tap button second, with that hint.
+- OwnTracks (iOS 27) first POSTs a `_type: status` message on connect (no location); the receiver then stores
+  `info.contact` + `info.types`, and the view says "verbonden, maar nog geen locatie: kies Actie en tik ↑". A phone left
+  on "Significant" (`monitoring=1` in its log) sends locations only after moving a few hundred metres.

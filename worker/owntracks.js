@@ -12,6 +12,11 @@ export const newToken = () => [...crypto.getRandomValues(new Uint8Array(24))].ma
 
 // OwnTracks location payloads → fixes { lat, lon, acc, t (ms), speed (m/s) | null }, oldest first. One object or an
 // array (its offline queue); other message types (transition, status, waypoints, lwt…) and junk are ignored.
+// The message types in a post (location, status, transition…): to show "connected, but no location yet"
+export function otTypes(text) {
+  let data; try { data = JSON.parse(text); } catch { return []; }
+  return [...new Set((Array.isArray(data) ? data : [data]).map((m) => (m && typeof m._type === 'string' ? m._type.slice(0, 20) : '?')))].slice(0, 5);
+}
 export function otFixes(text, now) {
   let data; try { data = JSON.parse(text); } catch { return []; }
   const list = Array.isArray(data) ? data : [data];

@@ -9,7 +9,7 @@ import { newFamily, apply, okDevice } from '../public/family.js';
 import { accessEmail } from './access.js';
 import { decideNotifications, parkOpen } from '../public/logic.js';
 import { okEndpoint, readyMessage, okDataUrl, liveRides, chatMessage, chatNote } from './rules.js';
-import { okToken, newToken, otFixes, step, actionsFor, freshTracker } from './owntracks.js';
+import { okToken, newToken, otFixes, otTypes, step, actionsFor, freshTracker } from './owntracks.js';
 import { sendPush, publicKey } from './push.js';
 
 const DEST = '8d8a8cc7-4523-4437-8bb6-5c87a26ba5ce'; // Walibi Belgium on ThemeParks.wiki
@@ -181,13 +181,19 @@ async function ownTracks(request, env, ctx, token) {
 }
 async function otReceive(request, env, ctx, token) {
   await schema(env);
-  const row = await env.DB.prepare('SELECT token, family, device, tracker, last FROM ot WHERE token = ?').bind(token).first();
+  const row = await env.DB.prepare('SELECT token, family, device, tracker, info, last FROM ot WHERE token = ?').bind(token).first();
   if (!row) return;
   const text = await request.text();
   if (text.length > 400000) return;
   const now = Date.now();
   const fixes = otFixes(text, now);
-  if (!fixes.length) return;
+  if (!fixes.length) {
+    // OwnTracks reached us but sent no location (e.g. its "status" message on connect): remember the contact, so the
+    // app can say "connected, now choose Actie and tap ↑" instead of "nothing received"
+    const old = (() => { try { return JSON.parse(row.info || '{}'); } catch { return {}; } })();
+    await env.DB.prepare('UPDATE ot SET info = ? WHERE token = ?').bind(JSON.stringify({ ...old, contact: now, types: otTypes(text) }), token).run();
+    return;
+  }
   const tr = freshTracker(JSON.parse(row.tracker || 'null'), fixes[0].t);
   const famRow = await env.DB.prepare('SELECT data FROM families WHERE id = ?').bind(row.family).first();
   if (!famRow) return;
@@ -216,7 +222,7 @@ async function otReceive(request, env, ctx, token) {
     && (!prev || lastGood.t - prev.t > 60e3 || Math.hypot((lastGood.lat - prev.lat) * 111194, (lastGood.lon - prev.lon) * 70500) > 25)) {
     try { await applyAction(env, ctx, row.family, { type: 'pos', device: row.device, lat: lastGood.lat, lon: lastGood.lon, at: lastGood.t }, now); } catch { /* ignore */ }
   }
-  const info = { t: lastGood?.t || null, acc: lastGood ? Math.round(lastGood.acc) : null, batt: lastGood?.batt ?? null, n: fixes.length, rejected };
+  const info = { t: lastGood?.t || null, acc: lastGood ? Math.round(lastGood.acc) : null, batt: lastGood?.batt ?? null, n: fixes.length, rejected, contact: now };
   // versioned on `last`: a parallel request for the same phone that saved first wins; we then send no pushes
   // (its own run already decided them), so a burst of retries never doubles a notification
   const res = await env.DB.prepare('UPDATE ot SET tracker = ?, info = ?, last = ? WHERE token = ? AND last = ?').bind(JSON.stringify(tr), JSON.stringify(info), Math.max(now, (row.last || 0) + 1), token, row.last).run();

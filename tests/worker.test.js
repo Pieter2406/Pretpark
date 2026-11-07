@@ -383,3 +383,12 @@ test('OwnTracks review fixes: oversized body refused before reading; push respec
   assert.ok(fam.target?.q?.[0]?.auto, 'queued');
   assert.ok(!pushes.some((p) => p.url.includes('/ot2')), 'no push: auto notifications off');
 });
+
+test('OwnTracks: a status message (no location) is remembered as contact', async () => {
+  const f = await newFam();
+  const dev = 'devot0000003';
+  const token = (await call('POST', `/api/otsetup/${f.id}`, { device: dev })).data.token;
+  await call('POST', '/api/ot/' + token, { _type: 'status', iOS: { version: '27.1.2' } });
+  const st = (await call('GET', `/api/otsetup/${f.id}?device=${dev}`)).data;
+  assert.ok(st.info.contact > 0); assert.deepEqual(st.info.types, ['status']); assert.equal(st.info.t, undefined);
+});
