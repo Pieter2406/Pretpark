@@ -612,7 +612,8 @@ const notesHtml = (n) => (n.length ? `<ul class="notes">${n.map(([i, t]) => `<li
 const shownPlans = new Map();
 const shown = (p) => { if (shownPlans.size > 60) shownPlans.clear(); shownPlans.set(p.key, p); return esc(p.key); };
 function planActions(plan, chosen) {
-  if (!chosen) return `<button class="primary big" data-go="choose:0" data-pkey="${shown(plan)}">🧭 Doen! Breng me erheen</button>`;
+  if (!chosen) return `<button class="primary big" data-go="choose:0" data-pkey="${shown(plan)}">🧭 Doen! Breng me erheen</button>
+    <button class="ghost small" data-qplan="${shown(plan)}" style="width:100%;margin-top:6px">⏳ We staan hier al in de rij</button>`;
   const t = S.fam.target;
   const mine = plan.parts.indexOf(myPart(plan));
   const queued = t.queued && !t.q ? `<p class="queued">⏳ In de rij sinds ${hhmm(t.queued)} (${Math.max(0, Math.round((Date.now() - t.queued) / 60e3))} min)</p>` : '';
@@ -661,6 +662,35 @@ function ticket(plan, chosen) {
     <div class="halves">${halves}</div>
     <div class="meet">📍 Daarna afspreken aan de uitgang van <b>${esc(meet.name)}</b></div>
     <div class="how">${planActions(plan, chosen)}</div></article>`;
+}
+// A plan for "we're standing in line at this ride" picked by hand. In a split (and we know who we are) only our half
+// switches to this ride, the other half keeps theirs; otherwise the whole family is on it.
+function planForRide(id) {
+  const a = byId[id], t = S.fam.target, st = status(S.live, id);
+  const wait = st.known && st.wait != null ? st.wait : null;
+  const side = (group) => ({ id, group, ride: group.filter((pid) => canRide(person(pid), a)), watch: group.filter((pid) => !canRide(person(pid), a)), escorted: [],
+    walkM: Math.round(walkOf(a) || 0), wait, waitKnown: wait != null, minutes: Math.round((wait ?? (a.cat === 'kids' ? 5 : 10)) + (a.ride || 3)) });
+  if (t?.plan?.type === 'split' && meId()) {
+    const i = myIdx(t.plan);
+    const parts = t.plan.parts.map((p, j) => (j === i ? side(p.group) : { ...p }));
+    if (parts[0].rest) return null; // the split's meeting point must be a ride
+    return { type: 'split', key: `${parts.map((p) => p.id || 'rest').join('+')}:hand`, parts, meet: parts[0].id, score: 0, minutes: Math.max(...parts.map((p) => p.minutes || 0)) };
+  }
+  const p = side(people().map((x) => x.id));
+  return { type: 'together', key: `${id}:hand`, parts: [p], score: 0, minutes: p.minutes };
+}
+// "⏳ We staan in de rij" for a ride chosen by hand (ride sheet) or the suggestion before choosing it
+async function queueAt(plan) {
+  if (!plan) { toast('Kies eerst een plan op Nu'); return; }
+  const t = S.fam.target;
+  if (!t?.plan || t.plan.key !== plan.key) { if (!(await act({ type: 'target', plan, device }, true))) return; }
+  const p = S.fam.target?.plan; if (!p) return;
+  if (p.type === 'split' && !meId()) { toast('Kies eerst wie je bent, dan weet ik welke rij van jullie is'); onboard('who'); return; }
+  const i = myIdx(p), pt = p.parts[i];
+  if (S.fam.target.q?.[i]) { toast('Jullie staan al in de rij'); return; }
+  if (!(await act({ type: 'queue', part: i, wait: pt?.id && status(S.live, pt.id).known ? status(S.live, pt.id).wait : null }))) return;
+  closeSheet(); if (S.guide) closeGuide(); scrollTo(0, 0);
+  toast(`⏳ In de rij bij ${byId[pt.id]?.name || ''}: spelletjes en aftellen op Nu`);
 }
 function myPart(plan) {
   return plan.parts.find((pt) => pt.group.includes(meId())) || plan.parts[0];
@@ -1334,6 +1364,7 @@ function rideSheet(id) {
     <p class="muted small">Min. ${a.alone ?? '–'} cm alleen${a.withAdult ? `, ${a.withAdult} cm met volwassene` : ''}${a.max ? `, max. ${a.max} cm` : ''}. Check het bordje aan de ingang.</p>
     ${st.assumed ? '<p class="small muted">Walibi geeft voor deze attractie geen live wachttijd door: ze telt als open zolang het park open is.</p>' : ''}
     <button class="primary big" data-goride="${a.id}" ${(st.known && !st.open) || markedClosed(S.fam.closed, a.id) ? 'disabled' : ''}>🧭 Breng me erheen</button>
+    ${(st.known && !st.open) || markedClosed(S.fam.closed, a.id) ? '' : `<button data-queueride="${a.id}" style="width:100%">${myQueue()?.pt?.id === a.id ? '⏳ Jullie staan hier in de rij' : '⏳ We staan hier in de rij'}</button>`}
     <button class="ghost small" data-closed="${a.id}" style="width:100%">${markedClosed(S.fam.closed, a.id) ? '✅ Toch open: weer voorstellen' : '🚫 Is dicht: niet meer voorstellen vandaag'}</button>
     <div class="row2"><button data-fav="${a.id}" aria-pressed="${favs.includes(a.id)}">${favs.includes(a.id) ? '★ Favoriet' : '☆ Favoriet'}</button>
       <button data-doneone="${a.id}">✓ Gedaan${S.fam.done?.[a.id] ? ` (${S.fam.done[a.id]}×)` : ''}</button></div>`);
@@ -2503,6 +2534,13 @@ document.addEventListener('click', async (e) => {
     await act({ type: 'closed', id: d.closed, on });
     toast(on ? '🚫 Gemeld: ik stel deze attractie vandaag niet meer voor' : '✅ Weer open'); rideSheet(d.closed); return;
   }
+  if (d.queueride) {
+    const id = d.queueride, t = S.fam.target;
+    // the ride of our current plan: just "in de rij"; any other ride: that ride becomes our plan (our half in a split)
+    if (t?.plan && myPart(t.plan)?.id === id) await queueAt(t.plan); else await queueAt(planForRide(id));
+    return;
+  }
+  if (d.qplan) { await queueAt(shownPlans.get(d.qplan)); return; }
   if (d.doneone) {
     const id = d.doneone; closeSheet(); if (S.guide) closeGuide();
     // the ride of the current plan: the normal "Gedaan" (ends the plan); any other ride: counted, the plan stays

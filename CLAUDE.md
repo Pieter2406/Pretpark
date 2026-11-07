@@ -396,3 +396,11 @@ No accounts; knowing the family id is the access.
   with Content-Type, `x-pretpark-size` and `x-pretpark-meta` (URI-encoded JSON); the server compares the received length
   and answers 409 "truncated" (the phone retries, the next photos go on). A multipart body that can't be parsed is 409
   too (never 500). The small version still goes multipart first (`thumbOnly`).
+
+## "In de rij" by hand (7 Nov)
+- Besides the chosen plan's "⏳ In de rij" and the guide's arrival button: the suggestion (before choosing) has
+  "⏳ We staan hier al in de rij" (`data-qplan`: chooses that plan and queues) and every ride sheet has "⏳ We staan hier
+  in de rij" (`data-queueride`). For a ride that isn't our plan, `planForRide(id)` makes one: the whole family on it,
+  or in a split (with "wie ben jij") only our half switches ride (key `<ids>:hand`, score 0; meeting point = part 0's
+  ride). `queueAt(plan)` sets the target if needed, then sends `queue` with the posted wait (known only); a second tap
+  keeps the first start.
