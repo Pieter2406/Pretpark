@@ -9,7 +9,7 @@ import { newFamily, apply, okDevice } from '../public/family.js';
 import { accessEmail } from './access.js';
 import { decideNotifications, parkOpen } from '../public/logic.js';
 import { okEndpoint, readyMessage, okDataUrl, liveRides, chatMessage, chatNote } from './rules.js';
-import { okToken, newToken, otFixes, otTypes, step, actionsFor, freshTracker } from './owntracks.js';
+import { okToken, newToken, otFixes, otTypes, step, actionsFor, freshTracker, TOILETS } from './owntracks.js';
 import { sendPush, publicKey } from './push.js';
 
 const DEST = '8d8a8cc7-4523-4437-8bb6-5c87a26ba5ce'; // Walibi Belgium on ThemeParks.wiki
@@ -349,7 +349,7 @@ async function push(request, env) {
   }
   if (request.method !== 'POST') throw fail(405, 'method not allowed');
   if (!okFamily(body.family)) throw fail(400, 'bad family');
-  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false, chat: body.prefs?.chat !== false, auto: body.prefs?.auto !== false };
+  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false, chat: body.prefs?.chat !== false, auto: body.prefs?.auto !== false, diaper: body.prefs?.diaper !== false };
   const s = body.sub;
   if (s) {
     if (!okEndpoint(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) throw fail(400, 'bad subscription');
@@ -546,7 +546,7 @@ async function notifyAll(env, ctx) {
   if (!parkOpen(live, now)) return; // schedule window, or (schedule unknown) at least one ride running
   for (const r of results) {
     try {
-      const { notes, memo } = decideNotifications({ fam: JSON.parse(r.data), deviceId: r.device, live, now, prefs: JSON.parse(r.prefs), memo: JSON.parse(r.memo) });
+      const { notes, memo } = decideNotifications({ fam: JSON.parse(r.data), deviceId: r.device, live, now, prefs: JSON.parse(r.prefs), memo: JSON.parse(r.memo), toilets: TOILETS });
       for (const n of notes) {
         const status = await pushTo(env, r.sub, n);
         if (status === 404 || status === 410) { await env.DB.prepare('DELETE FROM subs WHERE device = ?').bind(r.device).run(); break; }

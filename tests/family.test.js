@@ -331,3 +331,10 @@ test('closed: mark and unmark a ride for today', () => {
   assert.equal(f.closed[k], undefined);
   assert.throws(() => apply(f, { type: 'closed', id: 'nope' }, NOW), /bad id/);
 });
+
+test('diaper: the last check is remembered (a late replay never moves it back)', () => {
+  let f = apply(newFamily(NOW), { type: 'diaper' }, NOW);
+  assert.equal(f.diaper, NOW);
+  f = apply(f, { type: 'diaper', at: NOW - 3600e3 }, NOW);
+  assert.equal(f.diaper, NOW);
+});

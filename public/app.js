@@ -2,7 +2,7 @@
 // (family.js actions, versioned by `updated`); wait times come from /api/live; walking routes from route.js.
 import './compat.js'; // first: fallbacks for older iPhones
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
-import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor, markedClosed } from './logic.js';
+import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor, markedClosed, toddlerOf, diaperDue, nearestToilet } from './logic.js';
 import { QUESTS, FACTS } from './fun.js';
 import { freshTracker, addFix, detect, farState } from './activity.js';
 import { makePark, pathLength, bearingXY } from './route.js';
@@ -361,10 +361,26 @@ function autoCard() {
     const a = byId[pr.id];
     html += `<div class="autoq"><span>${icon(a)} Hoe was <b>${esc(a?.name || '')}</b>?</span><button data-go="rateopen">😍 🙂 😬</button><button class="ghost small" data-go="ratelater" aria-label="Niet nu">✕</button></div>`;
   }
+  html += diaperCard();
   const last = S.auto && S.autoLog[0] && Date.now() - S.autoLog[0].t < 30 * 60e3 ? S.autoLog[0] : null;
   const undo = S.lastUndo && Date.now() - S.lastUndo.t < 15 * 60e3 ? S.lastUndo : null;
   if (last) html += `<p class="small muted autolog">🤖 ${esc(last.text)} · ${hhmm(last.t)}${undo && undo.text === last.text ? ' <button class="linkbtn" data-go="autoundo">Klopt niet</button>' : ''}</p>`;
   return html;
+}
+
+// ---------- diaper check: passing a toilet while the toddler's last check is ≥ 90 min ago ("Later" = 20 min quiet)
+function diaperCard() {
+  const tod = toddlerOf(people());
+  if (!tod || !S.fam || !S.gps || Date.now() - S.gpsAt > 2 * 60e3 || S.sim) return '';
+  if (S.live?.close && Date.now() > S.live.close) return '';
+  if (!diaperDue(S.fam, S.live, Date.now()) || Date.now() - store.get('diaperLater', 0) < 20 * 60e3) return '';
+  // in a split, only on the phone that is with the toddler
+  const tp = S.fam.target?.plan;
+  if (tp?.type === 'split' && meId() && !tp.parts.some((pt) => pt.group?.includes(tod.id) && pt.group.includes(meId()))) return '';
+  const wc = nearestToilet(S.gps, S.park?.toilets);
+  if (!wc || wc.d > 45) return '';
+  if (diaperCard.buzzed !== Math.round(wc.lat * 1e4)) { diaperCard.buzzed = Math.round(wc.lat * 1e4); buzz([30, 50, 30]); }
+  return `<div class="autoq"><span>🚼 Toilet op <b>${Math.round(wc.d * 1.2)} m</b>: even de luier van ${esc(tod.name)} checken?</span><span class="row2"><button class="primary" data-go="diaperdone">✓ Gedaan</button><button data-go="diaperlater">Later</button></span><button class="ghost small" data-go="toilet" style="width:100%">🧭 Breng me naar het toilet</button></div>`;
 }
 
 // ---------- pocket mode: screen on (black) so the location keeps coming while the phone is in a pocket
@@ -868,7 +884,7 @@ function renderFam() {
 // ---------- push notifications
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const pushPrefs = () => ({ chat: true, auto: true, ...store.get('pushPrefs', { fav: true, best: true, food: true, down: true }) });
+const pushPrefs = () => ({ chat: true, auto: true, diaper: true, ...store.get('pushPrefs', { fav: true, best: true, food: true, down: true }) });
 async function renderPush() {
   const body = $('#pushBody'); if (!body) return;
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -885,7 +901,7 @@ async function renderPush() {
   const tog = (k, t) => `<label class="tog"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}> ${t}</label>`;
   body.innerHTML = sub
     ? `<p class="small">✅ Meldingen staan aan op deze gsm.</p>
-      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}${tog('chat', '💬 Berichten in de gezinschat')}${tog('auto', '🤖 Automatisch herkend (met OwnTracks)')}</div>
+      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}${tog('chat', '💬 Berichten in de gezinschat')}${tog('auto', '🤖 Automatisch herkend (met OwnTracks)')}${toddlerOf(people()) ? tog('diaper', '🚼 Luiercheck als je langs een toilet komt') : ''}</div>
       <div class="row2"><button data-go="pushtest">Testmelding</button><button data-go="pushoff">Uitzetten</button></div>`
     : `<p class="small muted">Krijg een seintje als een favoriet kort wordt, als er iets beters is, als het etenstijd is, als jullie attractie stilvalt of als de anderen klaar zijn. Ook als de app dicht is.</p>
       <button class="primary big" data-go="pushon">🔔 Meldingen aanzetten</button>`;
@@ -2323,6 +2339,8 @@ document.addEventListener('click', async (e) => {
     case 'ratelater': S.pendingRate = null; render(); break;
     case 'pocket': openPocket(); break;
     case 'autoundo': await undoLast(); break;
+    case 'diaperdone': await act({ type: 'diaper' }); toast('🚼 Top! Ik herinner je er later weer aan'); break;
+    case 'diaperlater': store.set('diaperLater', Date.now()); render(); break;
     case 'loccheck': S.otAllAt = 0; await loadOtAll(); renderLocCheck(); break;
     case 'ot': openOt(); break;
     case 'otclose': closeOt(); break;

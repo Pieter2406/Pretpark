@@ -220,6 +220,7 @@ export function apply(fam, act, now) {
       break;
     }
     case 'ate': f.ate = Math.max(f.ate || 0, t); break;
+    case 'diaper': f.diaper = Math.max(f.diaper || 0, t); break; // the toddler's diaper was checked/changed
     case 'pause': f.pause = Math.max(f.pause || 0, t); break;
     case 'pos':
       if (!okDevice(act.device)) throw new Error('bad device');

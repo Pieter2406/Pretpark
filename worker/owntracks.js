@@ -37,6 +37,8 @@ export function otFixes(text, now) {
 
 // point in the park outline (park.json: metres east/south of origin, like route.js)
 const [lat0, lon0] = park.origin;
+// the park's toilets as {lat, lon} (for the diaper check in the cron)
+export const TOILETS = (park.toilets || []).map(([x, y]) => ({ lat: lat0 - y / park.ky, lon: lon0 + x / park.kx }));
 export function inPark(p) {
   const x = (p.lon - lon0) * park.kx, y = (lat0 - p.lat) * park.ky;
   const o = park.outline; let inside = false;

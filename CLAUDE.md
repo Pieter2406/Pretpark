@@ -318,3 +318,10 @@ No accounts; knowing the family id is the access.
   leaves the app after sheet → guide; toasts above dialogs (z 70) but never in pocket mode; Gezin keeps unsaved people
   edits (`S.famDirty`); the guide scrolls on short screens; the OwnTracks view creates the link once "wie ben jij" is
   known; the boarded split card keeps "✅ Wij zijn klaar"; the iOS "Exacte locatie" path is current.
+
+## Diaper check (luier)
+- The toddler = `toddlerOf(people)` (child < 110 cm). `diaperDue`: ≥ 90 min since the last check (`fam.diaper`, action
+  `diaper`) or since opening / the first ride today. Nu shows "🚼 Toilet op X m: even de luier van … checken?" when a
+  fresh GPS fix is ≤ 45 m from a park toilet (✓ Gedaan → `diaper`; Later = 20 min quiet; 🧭 to the toilet). In a split
+  only the phone with the toddler. The cron sends the same as a push (rule 4b, tag `diaper`, at most every 45 min,
+  pref `diaper`, shown only with a toddler) using `TOILETS` from worker/owntracks.js and the phone's last position.

@@ -276,8 +276,23 @@ export function parkOpen(live, now) {
   return Object.values(live.rides || {}).some((r) => r?.s === 'OPERATING');
 }
 
+// The toddler (a child under 110 cm), if any: for the diaper check
+export const toddlerOf = (people) => people.find((p) => p.kind === 'child' && p.height < 110) || null;
+// Time for a diaper check: ≥ 90 min since the last one (or since the day started: opening, else the first ride done)
+export function diaperDue(fam, live, now) {
+  const start = live?.open || fam?.log?.find((l) => now - l.t < 14 * 3600e3)?.t || 0;
+  return start > 0 && now - Math.max(fam?.diaper || 0, start) > 90 * 60e3;
+}
+// The nearest toilet (straight line, m) of [{lat, lon}]
+export function nearestToilet(pos, toilets) {
+  let best = null;
+  for (const t of toilets || []) { const d = distM(pos, t); if (!best || d < best.d) best = { ...t, d }; }
+  return best;
+}
+
 // memo is this device's notification memory; returns { notes:[{tag,title,body,url}], memo }
-export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
+// toilets: [{lat, lon}] for the diaper check (the Worker passes park.json's toilets)
+export function decideNotifications({ fam, deviceId, live, now, prefs, memo, toilets = [] }) {
   memo = { w: {}, sent: {}, ...memo };
   const notes = [];
   const people = fam.people?.length ? fam.people : DEFAULT_PEOPLE;
@@ -352,6 +367,17 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
       memo.sent.pause = now;
       const f = foodOptions(walk).find((o) => o.f.seat);
       notes.push({ tag: 'pause', title: '🪑 Even zitten?', body: `Al een tijd op de been. ${f ? `${f.f.name} heeft zitplaatsen${here ? `, ${walkMin(f.walkM)} min` : ''}.` : ''}`, url: '/?food=1' });
+    }
+  }
+  // 4b. passing a toilet and the toddler's last diaper check is a while ago (only the phone that is with the toddler)
+  const tod = toddlerOf(people);
+  if (!notes.length && prefs.diaper !== false && !quiet && timeLeft && tod && here && diaperDue(fam, live, now) && since('diaper') > 45 * 60e3) {
+    const wc = nearestToilet(here, toilets);
+    const tp = target?.plan, me = fam.me?.[deviceId];
+    const withTod = !tp || tp.type !== 'split' || !me || tp.parts.some((pt) => pt.group?.includes(tod.id) && pt.group.includes(me));
+    if (wc && wc.d <= 45 && withTod) {
+      memo.sent.diaper = now;
+      notes.push({ tag: 'diaper', title: `🚼 Toilet op ${Math.round(wc.d * 1.2)} m`, body: `Even de luier van ${tod.name} checken?`, url: '/?diaper=1' });
     }
   }
   // 5. a clearly better next step

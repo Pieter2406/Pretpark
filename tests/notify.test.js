@@ -77,3 +77,23 @@ test('"Nu ideaal": not while the family stands in a queue', () => {
   const oldClient = { ...fam, target: { ...fam.target, queued: NOW - 40 * 60e3 } };
   assert.ok(!decide(oldClient, live, prefs).notes.some((n) => n.tag === 'best'), 'old client in the queue: quiet');
 });
+
+test('diaper check: near a toilet, ≥ 90 min since the last check, only the phone with the toddler', async () => {
+  const { TOILETS } = await import('../worker/owntracks.js');
+  const wc = TOILETS[0];
+  const live = { ...allOpen(), localTime: LOCAL, open: NOW - 3 * 3600e3, close: NOW + 6 * 3600e3, minutesLeft: 360 };
+  const at = { lat: wc.lat + 0.0002, lon: wc.lon }; // ~22 m
+  const base = { ...newFamily(NOW - 5 * 3600e3), positions: { [DEV]: { ...at, t: NOW } }, ate: NOW - 20 * 60e3, pause: NOW - 20 * 60e3 };
+  const prefs = { best: false, fav: false, food: false, down: false };
+  const d = (fam, p = prefs, memo = {}) => decideNotifications({ fam, deviceId: DEV, live, now: NOW, prefs: p, memo, toilets: TOILETS });
+  const r = d(base);
+  assert.ok(r.notes.some((n) => n.tag === 'diaper' && /luier/.test(n.body)), 'due + near a toilet');
+  assert.ok(!d({ ...base, diaper: NOW - 30 * 60e3 }).notes.some((n) => n.tag === 'diaper'), 'checked 30 min ago');
+  assert.ok(!d({ ...base, positions: { [DEV]: { lat: wc.lat + 0.003, lon: wc.lon, t: NOW } } }).notes.some((n) => n.tag === 'diaper'), 'far from a toilet');
+  assert.ok(!d(base, { ...prefs, diaper: false }).notes.some((n) => n.tag === 'diaper'), 'switched off');
+  assert.ok(!d(base, prefs, r.memo).notes.some((n) => n.tag === 'diaper'), 'not again within 45 min');
+  // a split: the toddler (p4) is with p2; this phone is p1 → nothing
+  const plan = { type: 'split', key: 'x', meet: ATTRACTIONS[0].id, parts: [{ group: ['p1', 'p3'], id: ATTRACTIONS[0].id }, { group: ['p2', 'p4'], rest: true }] };
+  assert.ok(!d({ ...base, me: { [DEV]: 'p1' }, target: { plan, setAt: NOW - 60e3 } }).notes.some((n) => n.tag === 'diaper'), 'not the toddler\'s phone');
+  assert.ok(d({ ...base, me: { [DEV]: 'p2' }, target: { plan, setAt: NOW - 60e3 } }).notes.some((n) => n.tag === 'diaper'), 'the toddler\'s phone');
+});
