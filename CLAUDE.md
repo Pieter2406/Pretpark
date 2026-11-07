@@ -342,3 +342,14 @@ No accounts; knowing the family id is the access.
 - `phoneOf`: "+32 (0)470…", "+320470…" and "0032…" → "+32470…". Chat re-renders only for new message ids. Live data
   older than the copy we have is ignored. Rest/diaper timing starts at `dayStart` (opening, but not before the family
   was made and about 20 min before the first ride today). The pocket "screen went off" note shows after closing pocket.
+
+## Review round 3 (7 Nov)
+- Pushes: "ligt stil" is remembered per part (`memo.downs`), so two stopped rides of a split each push once; a favourite
+  push skips rides of the current plan and waits 60 min per ride (`memo.sent['fav-'+id]`); `here` = a position ≤ 15 min
+  old, the diaper push needs one ≤ 5 min; a phone whose newest position (≤ 3 h) is > 1.5 km from Walibi gets no park
+  pushes at all (the app now posts its real spot every 10 min while `S.sim === 'far'`; the map hides such a partner).
+- `undo` also removes the ride from the newest log entry (story) and the wait `done` estimated at that moment.
+- Retention DELETEs run once an hour (`scheduledTime` minute 17), not every minute (D1 reads).
+- Guide turn cues within 3 s wait instead of being lost; outbox gives up only after 6 tries and 15 min; "Wie ben jij"
+  preselects only when no other phone chose anyone, and marks names chosen elsewhere; ticket pages without a code are
+  dropped only after the last code page (counted in the toast), code-less de-dupe key includes the page image size.

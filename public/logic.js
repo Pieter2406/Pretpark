@@ -305,8 +305,11 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo, toi
   const notes = [];
   const people = fam.people?.length ? fam.people : DEFAULT_PEOPLE;
   const pos = fam.positions?.[deviceId];
-  const fresh = pos && now - pos.t < 45 * 60e3;
+  // where this phone is: only a recent position counts (the app posts every ≤ 3 min while open, OwnTracks every minute)
+  const fresh = pos && now - pos.t < 15 * 60e3;
   const here = fresh ? pos : null;
+  // went home early: the newest position (≤ 3 h old) is well away from Walibi → no park tips at all
+  if (pos && now - pos.t < 3 * 3600e3 && distM(pos, PARK_SPOT) > 1500) return { notes, memo };
   const walk = (x) => (here ? distM(here, x) * PATH_FACTOR : 400);
   const ctx = { people, favs: fam.favs || [], done: fam.done || {}, rates: fam.rates || {}, waitFactor: waitFactor(fam.waits, now), closed: fam.closed || {}, now, live, walk, month: new Date(now).getMonth(), minutesLeft: live.minutesLeft, rain: raining(live), walkPref: fam.walk, clock: parkClock(live) };
   const since = (k) => now - (memo.sent[k] || 0);
@@ -322,9 +325,12 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo, toi
       if (st.s === 'OPERATING') memo.op = { ...(memo.op || {}), [part.id]: now };
       // a breakdown: DOWN, or CLOSED shortly after it was running (Walibi's feed sometimes says CLOSED), not near closing
       const stopped = st.s === 'DOWN' || (st.s === 'CLOSED' && now - (memo.op?.[part.id] || 0) < 30 * 60e3 && (!live.close || now < live.close - 30 * 60e3));
-      if (stopped && memo.down !== target.setAt + part.id) {
+      // every stopped part is told once (a split with both rides stopped must not alternate every minute)
+      const key = target.setAt + part.id;
+      if (stopped && memo.down !== key && !memo.downs?.[key]) {
         const alt = plans(ctx)[0];
-        memo.down = target.setAt + part.id;
+        memo.down = key;
+        memo.downs = Object.fromEntries([...Object.entries(memo.downs || {}).filter(([, t]) => now - t < 6 * 3600e3), [key, now]]);
         notes.push({ tag: 'down', title: `⚠️ ${nm(part.id)} ligt stil`, body: alt ? `Nieuw voorstel: ${describe(alt, people)}` : 'Open de app voor een nieuw voorstel.', url: '/' });
         break;
       }
@@ -332,11 +338,14 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo, toi
   }
   // 2. favourite got short
   if (!notes.length && prefs.fav !== false) {
+    // not the ride we're already heading to or queueing for; each favourite at most once an hour
+    const planned = new Set((target?.plan?.parts || []).map((p) => p.id).filter(Boolean));
     for (const id of ctx.favs) {
       const st = status(live, id);
-      if (!st.open || st.wait == null) continue;
+      if (!st.open || st.wait == null || planned.has(id)) continue;
       const before = memo.w[id];
-      if (before != null && before - st.wait >= 10 && st.wait <= 15 && !quiet) {
+      if (before != null && before - st.wait >= 10 && st.wait <= 15 && !quiet && since('fav-' + id) > 60 * 60e3) {
+        memo.sent['fav-' + id] = now;
         const a = byId[id];
         notes.push({ tag: 'fav-' + id, title: `⭐ ${a.name}: nog maar ${st.wait} min`, body: here ? `Je staat er op ${walkMin(walk(a))} min stappen.` : 'Nu snel erheen?', url: '/?go=' + id });
         memo.w[id] = st.wait; // reset the high-water mark after telling
@@ -378,7 +387,8 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo, toi
   }
   // 4b. passing a toilet and the toddler's last diaper check is a while ago (only the phone that is with the toddler)
   const tod = toddlerOf(people);
-  if (!notes.length && prefs.diaper !== false && !quiet && timeLeft && tod && here && diaperDue(fam, live, now) && since('diaper') > 45 * 60e3) {
+  // only on a position of the last 5 min (the app closed near a toilet 40 min ago says nothing about where we are now)
+  if (!notes.length && prefs.diaper !== false && !quiet && timeLeft && tod && here && now - here.t < 5 * 60e3 && diaperDue(fam, live, now) && since('diaper') > 45 * 60e3) {
     const wc = nearestToilet(here, toilets);
     const tp = target?.plan, me = fam.me?.[deviceId];
     const withTod = !tp || tp.type !== 'split' || !me || tp.parts.some((pt) => pt.group?.includes(tod.id) && pt.group.includes(me));

@@ -148,7 +148,17 @@ export function apply(fam, act, now) {
     }
     case 'undo':
       if (!okId(act.id)) throw new Error('bad id');
+      if (!f.done[act.id]) break;
       if (f.done[act.id] > 1) f.done[act.id]--; else delete f.done[act.id];
+      { // the story and the wait statistics forget it too: the newest log entry with this ride, and the wait that
+        // "done" estimated at that moment (a measured "aan de beurt" wait stays: that queue was real)
+        const i = f.log.findLastIndex((l) => l.ids?.includes(act.id));
+        if (i >= 0) {
+          const e = f.log[i], ids = e.ids.filter((x) => x !== act.id);
+          f.log = ids.length ? f.log.map((l, j) => (j === i ? { ...l, ids } : l)) : f.log.filter((_, j) => j !== i);
+          f.waits = (f.waits || []).filter((w) => !(w.id === act.id && w.t === e.t));
+        }
+      }
       break;
     case 'target': {
       const plan = sanitizePlan(act.plan, f.people);

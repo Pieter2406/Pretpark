@@ -42,8 +42,10 @@ const S = {
 // ---------- people
 const people = () => S.fam?.people || [];
 const meId = () => S.fam?.me?.[device] || null;
-// the adult no other phone has claimed yet (the second phone mustn't default to the first phone's person); null = all taken
-const freeAdult = () => { const taken = new Set(Object.entries(S.fam?.me || {}).filter(([d]) => d !== device).map(([, p]) => p)); return people().find((p) => p.kind === 'adult' && !taken.has(p.id))?.id || null; };
+// people other phones chose. Nothing claimed yet → the first adult is preselected; otherwise nobody (a second phone may be
+// the partner's, or the same person's home-screen app: they must pick) and claimed names say so
+const claimed = () => new Set(Object.entries(S.fam?.me || {}).filter(([d]) => d !== device).map(([, p]) => p));
+const freeAdult = () => (claimed().size ? null : people().find((p) => p.kind === 'adult')?.id || null);
 const person = (id) => people().find((p) => p.id === id);
 // live status, but a ride the family marked "Is dicht" counts as closed (map pins, list order)
 const famStatus = (id) => { const st = status(S.live, id); return markedClosed(S.fam?.closed, id) ? { ...st, open: false, wait: null, s: 'MARKED' } : st; };
@@ -136,13 +138,13 @@ async function flushOutbox() {
   try {
     while (S.outbox.length) {
       const head = S.outbox[0];
-      try { const r = await api('/api/family/' + S.famId, { method: 'POST', body: { ...head, tries: undefined } }); S.outbox.shift(); store.set('outbox', S.outbox); takeFam(r); continue; }
+      try { const r = await api('/api/family/' + S.famId, { method: 'POST', body: { ...head, tries: undefined, firstFail: undefined } }); S.outbox.shift(); store.set('outbox', S.outbox); takeFam(r); continue; }
       catch (e) {
         if (e.offline || e.status === 401) break; // no signal / log in again: retry later, nothing lost
-        // a rejected action is dropped; one that keeps failing (busy, server error) is given up after 6 tries so it
-        // never blocks everything behind it
-        head.tries = (head.tries || 0) + 1;
-        if (e.status !== 400 && head.tries < 6) { store.set('outbox', S.outbox); break; }
+        // a rejected action is dropped; one that keeps failing (busy, server error) is given up after 6 tries AND
+        // 15 min (a short server hiccup never loses an offline "Gedaan"), so it never blocks everything behind it
+        head.tries = (head.tries || 0) + 1; head.firstFail ||= Date.now();
+        if (e.status !== 400 && (head.tries < 6 || Date.now() - head.firstFail < 15 * 60e3)) { store.set('outbox', S.outbox); break; }
         if (e.status !== 400) toast('Een oude wijziging lukte niet en is overgeslagen.');
       }
       S.outbox.shift(); store.set('outbox', S.outbox);
@@ -277,9 +279,13 @@ function usePosition(g, c, good, posT) {
   if (S.pocket) { if (!lastPlanPos || distM(lastPlanPos, here) > 40) { lastPlanPos = here; recompute(); } renderPocket(); }
   else if (!lastPlanPos || distM(lastPlanPos, here) > 12) { recompute(); render(); }
   else if (S.guide) { S.here = S.park.fromHere(here); updateGuide(); } // the guide follows every fix, the plan only every 12 m
-  if (good && S.famId && !S.sim && (!lastPost.p || (distM(lastPost.p, here) > 25 && now - lastPost.t > 60e3) || now - lastPost.t > 180e3)) {
-    lastPost = { t: now, p: here };
-    act({ type: 'pos', device, lat: here.lat, lon: here.lon }, true);
+  // in the park: every 25 m / 3 min (partner dot, the cron's tips). Away from Walibi: the real spot every 10 min, so the
+  // cron knows we went home and stops park tips (pos() would say "at the entrance")
+  const away = S.sim === 'far' && good;
+  if (good && S.famId && (!S.sim || away) && (away ? now - lastPost.t > 600e3 : !lastPost.p || (distM(lastPost.p, here) > 25 && now - lastPost.t > 60e3) || now - lastPost.t > 180e3)) {
+    const p = away ? { lat: g.lat, lon: g.lon } : here;
+    lastPost = { t: now, p };
+    act({ type: 'pos', device, lat: p.lat, lon: p.lon }, true);
   }
 }
 function onGpsError(err) {
@@ -787,7 +793,7 @@ function drawPins() {
   if (S.fam?.car) { const xy = S.park.toXY(S.fam.car); pins.push(`<g transform="translate(${xy.x} ${xy.y}) scale(${k})"><circle r="11" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/><text y="4.5" text-anchor="middle" font-size="12">🚗</text></g>`); }
   // the partner's phone, if it reported in the last 15 minutes
   for (const [dev, p] of Object.entries(S.fam?.positions || {})) {
-    if (dev === device || Date.now() - p.t > 15 * 60e3) continue;
+    if (dev === device || Date.now() - p.t > 15 * 60e3 || distM(p, ENTRANCE) > 2000) continue; // a phone that went home isn't on the park map
     const who = person(S.fam.me?.[dev]); const xy = S.park.toXY(p);
     pins.push(`<g transform="translate(${xy.x} ${xy.y}) scale(${k})"><circle r="10" fill="var(--plum)" stroke="#fff" stroke-width="3"/><text y="4" text-anchor="middle" font-size="9" fill="#fff" font-weight="800">${esc((who?.name || 'P')[0])}</text></g>`);
     tryLabel(xy.x, xy.y - 16 * k, who?.name || 'partner', 9 * k);
@@ -1074,7 +1080,9 @@ function guideHeading() {
       : [() => '⬆️ Rechtdoor', () => (rel > 0 ? '↗️ Schuin rechts' : '↖️ Schuin links'), () => (rel > 0 ? '➡️ Rechts afslaan' : '⬅️ Links afslaan'), () => '↩️ Draai je om'][k]();
     if (text !== G.lastSay) {
       sayEl.textContent = text;
-      if (hasHeading && G.lastSay && Date.now() - (G.lastBuzz || 0) > 3000) { G.lastBuzz = Date.now(); buzz(text.includes('Rechtdoor') ? 10 : [30, 40, 30]); say(text.replace(/^\S+\s/, '')); }
+      // a cue within 3 s of the last one waits (G.lastSay stays old, so it's given on a later update), never lost
+      if (hasHeading && G.lastSay && Date.now() - (G.lastBuzz || 0) < 3000) return;
+      if (hasHeading && G.lastSay) { G.lastBuzz = Date.now(); buzz(text.includes('Rechtdoor') ? 10 : [30, 40, 30]); say(text.replace(/^\S+\s/, ''), true); }
       G.lastSay = text;
     }
   }
@@ -1734,16 +1742,19 @@ async function importTickets(files) {
   try {
     const { readTickets } = await import('./tickets.js');
     const found = await readTickets(files, (msg) => { S.ticketBusy = msg; const el = $('#tbusy'); if (el) el.textContent = msg; });
-    const known = new Set(S.tickets.map((t) => t.code || `${t.source}#${t.pageNo}`));
+    // a ticket without a code is recognised by file name + page + image size (two different "image.jpeg" don't collide)
+    const keyOf = (t) => t.code || `${t.source}#${t.pageNo}#${(t.page || '').length}`;
+    const known = new Set(S.tickets.map(keyOf));
     let added = 0, nr = S.tickets.length;
     for (const f of found) {
-      if (known.has(f.code || `${f.source}#${f.pageNo}`)) continue; // importing the same file again adds nothing
+      if (known.has(keyOf(f))) continue; // importing the same file again adds nothing
       const isParking = /parking|parkeer|stationnement/i.test(`${f.source} ${f.code || ''}`);
       const t = { ...f, id: rnd(16), name: isParking ? 'Parkeerticket' : `Ticket ${++nr}`, person: isParking ? 'car' : null, created: Date.now() + nr, pending: true };
       await idb.put('tickets', t); added++;
     }
     const noCode = found.filter((f) => !f.code).length;
-    const bad = found.failed?.length ? ` · niet gelukt: ${found.failed.slice(0, 2).join(', ')}${found.failed.length > 2 ? '…' : ''}` : '';
+    const bad = (found.failed?.length ? ` · niet gelukt: ${found.failed.slice(0, 2).join(', ')}${found.failed.length > 2 ? '…' : ''}` : '')
+      + (found.skipped ? ` · ${found.skipped} pagina${found.skipped > 1 ? "'s" : ''} zonder code overgeslagen` : '');
     toast((added ? `🎟️ ${added} ticket${added > 1 ? 's' : ''} toegevoegd${noCode ? ` (${noCode} zonder herkende code)` : ''}` : 'Geen nieuwe tickets gevonden') + bad, null, bad ? 6000 : undefined);
   } catch (e) {
     console.error(e); toast('Inlezen lukte niet. Probeer een screenshot van de code.');
@@ -2221,7 +2232,7 @@ function onboard(step = S.fam ? 'who' : 'start') {
     el.innerHTML = `<form class="ob" id="obForm"><h2>Wie zijn jullie?</h2><p class="muted small">Echte namen maken de suggesties persoonlijk (“Jij en Lotte → Kondaa”).</p>
       ${ps.map((p) => `<label class="obp"><span aria-hidden="true">${emoji(p)}</span><input type="text" name="${p.id}" value="${esc(/^(Volwassene \d|Groot kind|Peuter)$/.test(p.name) ? '' : p.name)}" placeholder="${esc(p.name)}" maxlength="24" autocomplete="off"></label>`).join('')}
       <h3>Wie gebruikt deze gsm?</h3>
-      <div class="seg">${ps.filter((p) => p.kind === 'adult').map((p, i) => `<label class="segopt"><input type="radio" name="me" value="${p.id}" ${meId() === p.id || (!meId() && p.id === freeAdult()) ? 'checked' : ''}> <span>${emoji(p)} ${esc(p.name)}</span></label>`).join('')}</div>
+      <div class="seg">${ps.filter((p) => p.kind === 'adult').map((p, i) => `<label class="segopt"><input type="radio" name="me" value="${p.id}" ${meId() === p.id || (!meId() && p.id === freeAdult()) ? 'checked' : ''}> <span>${emoji(p)} ${esc(p.name)}${claimed().has(p.id) ? ' <small class="muted">(ook op een andere gsm)</small>' : ''}</span></label>`).join('')}</div>
       <button class="primary big" type="submit">Klaar</button>
       <button type="button" class="ghost small" data-go="obskip">Later</button></form>`;
   }

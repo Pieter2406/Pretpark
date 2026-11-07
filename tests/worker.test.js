@@ -244,7 +244,7 @@ test('cron retention: by the family\'s last change; families with photos and pho
   sub('devret00001', 'oldfamily0001'); sub('devret00002', 'weekoldfam001'); sub('devret00003', 'freshfamily01');
   const saved = env.VAPID_PRIVATE_JWK; delete env.VAPID_PRIVATE_JWK; // retention only, no notifications
   waits = [];
-  await worker.scheduled({}, env, ctx);
+  await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 7, 12, 17) }, env, ctx); // retention runs at :17 only
   await settle();
   env.VAPID_PRIVATE_JWK = saved;
   const ids = (sql) => db.prepare(sql).all().map((r) => Object.values(r)[0]);

@@ -354,3 +354,13 @@ test('queue: an unknown posted wait stays unknown (not 0)', () => {
   f = apply(f, { type: 'queue', wait: 15 }, NOW - 9 * 60e3);
   assert.equal(f.target.q[0].w, 15); // filled in by a later queue that knows it
 });
+
+test('undo: the ride also leaves the log (story) and its estimated wait', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  f = apply(f, { type: 'queue', wait: 20 }, NOW - 30 * 60e3);
+  const id = f.target.plan.parts[0].id;
+  f = apply(f, { type: 'done', ids: [id] }, NOW - 5 * 60e3);
+  assert.equal(f.done[id], 1); assert.equal(f.log.length, 1); assert.equal(f.waits.length, 1);
+  f = apply(f, { type: 'undo', id }, NOW);
+  assert.equal(f.done[id], undefined); assert.equal(f.log.length, 0); assert.equal(f.waits.length, 0);
+});

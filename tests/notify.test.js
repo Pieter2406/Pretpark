@@ -103,3 +103,42 @@ test('rest reminder: a family arriving 2 h after opening is not told to sit down
   const fam = famAt(NOW - 3 * 3600e3, { log: [{ t: NOW - 30 * 60e3, ids: [k] }] }); // first ride 30 min ago
   assert.ok(!decide(fam, live).notes.some((n) => n.tag === 'pause'));
 });
+
+test('diaper push: only on a recent position (not one from before the app was closed)', () => {
+  const live = { ...allOpen(), localTime: LOCAL, open: NOW - 3 * 3600e3 };
+  const wc = { lat: 50.70157, lon: 4.5936 };
+  const at = (age) => famAt(NOW - 3 * 3600e3, { positions: { dev1: { lat: wc.lat + 10 / 111194, lon: wc.lon, t: NOW - age } } });
+  const tag = (f) => decideNotifications({ fam: f, deviceId: 'dev1', live, now: NOW, prefs: { best: false, fav: false, food: false }, memo: {}, toilets: [wc] }).notes.map((n) => n.tag);
+  assert.ok(tag(at(60e3)).includes('diaper'));
+  assert.ok(!tag(at(40 * 60e3)).includes('diaper'));
+});
+
+test('"ligt stil": a split with both rides stopped tells each once, not alternating every minute', () => {
+  const k2 = ATTRACTIONS.find((a) => a.name !== 'Kondaa' && a.cat === 'family').id;
+  const plan = { type: 'split', key: k + k2, parts: [{ id: k, group: ['p1', 'p3'] }, { id: k2, group: ['p2', 'p4'] }] };
+  const live = { ...allOpen(), localTime: LOCAL, open: NOW - 3600e3 };
+  live.rides[k] = { s: 'DOWN', w: null }; live.rides[k2] = { s: 'DOWN', w: null };
+  const fam = famAt(NOW - 3600e3, { target: { plan, setAt: NOW - 10 * 60e3 } });
+  let memo = {}, tags = [];
+  for (let i = 0; i < 6; i++) {
+    const r = decideNotifications({ fam, deviceId: DEV, live, now: NOW + i * 60e3, prefs: { best: false, fav: false, food: false }, memo });
+    memo = r.memo; tags.push(...r.notes.map((n) => n.title));
+  }
+  assert.equal(tags.filter((t) => /ligt stil/.test(t)).length, 2);
+});
+
+test('favourite: not for the ride we are heading to, and at most once an hour', () => {
+  const live = (w) => { const l = { ...allOpen(30), localTime: LOCAL, open: NOW - 3600e3 }; l.rides[k] = { s: 'OPERATING', w }; return l; };
+  const prefs = { best: false, fav: true, food: false };
+  const run = (fam) => { let memo = {}, n = 0; const seq = [30, 5, 25, 5]; seq.forEach((w, i) => { const r = decideNotifications({ fam, deviceId: DEV, live: live(w), now: NOW + i * 10 * 60e3, prefs, memo }); memo = r.memo; n += r.notes.filter((x) => x.tag === 'fav-' + k).length; }); return n; };
+  assert.equal(run(famAt(NOW - 3600e3, { favs: [k] })), 1);
+  const plan = { type: 'together', key: k, parts: [{ id: k, group: ['p1', 'p2', 'p3', 'p4'] }] };
+  assert.equal(run(famAt(NOW - 3600e3, { favs: [k], target: { plan, setAt: NOW - 5 * 60e3 } })), 0);
+});
+
+test('went home early: no park tips when the phone is far from Walibi', () => {
+  const live = { ...allOpen(), localTime: LOCAL, open: NOW - 5 * 3600e3 };
+  const home = famAt(NOW - 6 * 3600e3, { positions: { [DEV]: { lat: 51.05, lon: 3.72, t: NOW - 20 * 60e3 } } });
+  assert.deepEqual(decide(home, live, { best: true, fav: true }).notes, []);
+  assert.ok(decide(famAt(NOW - 6 * 3600e3), live).notes.some((n) => n.tag === 'pause'));
+});

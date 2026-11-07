@@ -47,7 +47,7 @@ export default {
     }
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(notifyAll(env, ctx));
+    ctx.waitUntil(notifyAll(env, ctx, event?.scheduledTime));
   },
 };
 
@@ -524,10 +524,16 @@ async function photos(request, env, email, fam, id, what) {
 }
 
 // ---------- cron: every minute
-async function notifyAll(env, ctx) {
+async function notifyAll(env, ctx, at) {
   await schema(env);
   const now = Date.now();
   const oldFam = now - KEEP_FAMILY_DAYS * 864e5, oldSubs = now - KEEP_SUBS_DAYS * 864e5;
+  // retention once an hour (these scan whole tables: every minute would add up to millions of D1 reads a day)
+  if (new Date(at || now).getUTCMinutes() === 17) await retention(env, now, oldFam, oldSubs);
+  if (!env.VAPID_PRIVATE_JWK) return;
+  await pushAll(env, ctx, now);
+}
+async function retention(env, now, oldFam, oldSubs) {
   // by the family's last change (not by ticket/sub age); rows of families that no longer exist go too
   await env.DB.prepare('DELETE FROM tickets WHERE family IN (SELECT id FROM families WHERE updated < ?) OR family NOT IN (SELECT id FROM families)').bind(oldFam).run();
   await env.DB.prepare('DELETE FROM subs WHERE family IN (SELECT id FROM families WHERE updated < ?) OR family NOT IN (SELECT id FROM families)').bind(oldSubs).run();
@@ -537,7 +543,8 @@ async function notifyAll(env, ctx) {
   await env.DB.prepare('DELETE FROM photo_gone WHERE t < ?').bind(oldFam).run();
   // OwnTracks links: gone after a day without positions (the location track itself is never kept longer than 45 min)
   await env.DB.prepare('DELETE FROM ot WHERE (last < ? AND created < ?) OR family NOT IN (SELECT id FROM families)').bind(Date.now() - 24 * 3600e3, Date.now() - 24 * 3600e3).run();
-  if (!env.VAPID_PRIVATE_JWK) return;
+}
+async function pushAll(env, ctx, now) {
   const { results } = await env.DB.prepare(
     'SELECT s.device, s.sub, s.prefs, s.memo, f.data FROM subs s JOIN families f ON f.id = s.family WHERE f.updated > ?',
   ).bind(now - 14 * 3600e3).all();
