@@ -444,3 +444,12 @@ No accounts; knowing the family id is the access.
   kept here, not online, refused, queue, memory, camera lost) so a phone's stuck photos can be seen from afar.
 - R2 listing: `npx cf r2 objects list --bucket-name pretpark-photos --cf-r2-jurisdiction eu --prefix <family>/` (20 per
   page; filter by `--prefix <family>/<id>`).
+
+## Floating tab bar on iPhone (7 Nov)
+- iOS home-screen app: after the keyboard closes (or after coming back from the camera/another app) WebKit can leave
+  `position: fixed; bottom: 0` bars where the keyboard's top was, so the tab bar floated mid-screen and scrolled with the
+  page (Pieter's screenshot on Gezin). Now `body.kbd` hides `.tabs`/`.fab` while a text field has focus, and `repin()`
+  (1-px scroll nudge + a display toggle of `.tabs`) runs after focusout, visualViewport resize, return to the front,
+  pageshow and orientationchange. Test: scratchpad tabbar.js (Chromium + WebKit; the real keyboard can't be emulated).
+- Marjan's phone (Android 10, Chrome 156) reported via `album-state`: 16 on the server, 2 kept, 0 waiting — her missing
+  photos never entered the app (camera killed the tab before this detection existed); they can't be recovered.

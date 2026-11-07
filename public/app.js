@@ -2381,6 +2381,25 @@ if (vv) {
   const fit = () => { const r = document.documentElement.style; r.setProperty('--vvh', vv.height + 'px'); r.setProperty('--vvt', vv.offsetTop + 'px'); };
   vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
 }
+// iOS (home-screen app) leaves position:fixed bars where the keyboard's top was after it closes, or after coming back
+// from the camera / another app: the bottom tab bar then floats mid-screen and scrolls with the page (7 Nov). While
+// typing the bar is hidden (body.kbd); afterwards a 1-px scroll nudge makes WebKit lay the fixed bars out again.
+const typing = (el) => el?.matches?.('input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=button]), textarea, select');
+function repin() {
+  requestAnimationFrame(() => {
+    const y = window.scrollY;
+    window.scrollTo(window.scrollX, y + 1); window.scrollTo(window.scrollX, y);
+    const t = document.querySelector('.tabs'); if (t) { t.style.display = 'none'; void t.offsetHeight; t.style.display = ''; }
+  });
+}
+document.addEventListener('focusin', (e) => { if (typing(e.target)) document.body.classList.add('kbd'); });
+document.addEventListener('focusout', () => {
+  setTimeout(() => { if (!typing(document.activeElement)) { document.body.classList.remove('kbd'); repin(); setTimeout(repin, 350); } }, 60);
+});
+vv?.addEventListener('resize', () => { if (!typing(document.activeElement)) { clearTimeout(repin.t); repin.t = setTimeout(repin, 120); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(repin, 300); });
+addEventListener('pageshow', () => setTimeout(repin, 300));
+addEventListener('orientationchange', () => setTimeout(repin, 400));
 function closeChat() { S.chatOpen = false; clearInterval(openChat.timer); $('#chat').hidden = true; closeDialog($('#chat')); renderChatBadge(); }
 function renderChat() {
   const list = $('#chList'); if (!list) return;

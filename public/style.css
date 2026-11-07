@@ -541,3 +541,6 @@ html { transition: background-color .4s; }
 .showcard .row2 { grid-column: 1 / -1; margin-top: 4px; }
 .showbtn { width: 100%; margin-top: 8px; }
 .hist .past { opacity: .5; }
+
+/* typing: the bottom bar and the camera button step aside (iOS keeps fixed bars at the keyboard's edge otherwise) */
+body.kbd .tabs, body.kbd .fab { display: none; }
