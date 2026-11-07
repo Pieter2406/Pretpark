@@ -526,3 +526,11 @@ html { transition: background-color .4s; }
 /* the guide on short screens (375×667, Safari with bars): scroll instead of hiding Stop/Gedaan */
 .guide { overflow-y: auto; }
 @media (max-height: 720px) { .guide .mapwrap { min-height: 140px; } }
+
+/* history (📜): one row per thing recorded today, time editable, ✕ deletes */
+.hist .hrow { grid-template-columns: auto 1fr auto auto; padding: 6px 6px 6px 12px; }
+.hist .hrow > span:first-child { font-size: 1.4rem; }
+.htime { font: inherit; font-size: 16px; padding: 6px 4px; border: 1px solid var(--line, #ccc); border-radius: 10px; background: var(--bg, #fff); color: inherit; min-height: 40px; width: 7.4em; }
+.hdel { min-width: 44px; min-height: 44px; font-size: 1.1rem; }
+#histRide, #histAddT { font: inherit; font-size: 16px; width: 100%; min-height: 44px; border-radius: 12px; border: 1px solid var(--line, #ccc); background: var(--bg, #fff); color: inherit; padding: 0 10px; }
+.histbtn { width: 100%; margin-top: 6px; }

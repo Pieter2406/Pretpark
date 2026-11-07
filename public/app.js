@@ -116,7 +116,11 @@ async function act(a, quiet = false) {
   try {
     const r = await api('/api/family/' + S.famId, { method: 'POST', body: a });
     if (a.type !== 'pos') inflight(a, false);
-    takeFam(r); recompute(); if (!quiet) render();
+    const key = (f) => JSON.stringify([f?.target?.setAt, f?.target?.ready, f?.done]);
+    const was = key(S.fam);
+    takeFam(r); recompute();
+    // a quiet action (rate, guess, pos…) can bring the other phone's done/plan/ready: then the screen must follow too
+    if (!quiet || key(S.fam) !== was) render();
     return true;
   } catch (e) {
     if (a.type !== 'pos') inflight(a, false);
@@ -408,6 +412,58 @@ function diaperCard() {
   return `<div class="autoq"><span>🚼 Toilet op <b>${Math.round(wc.d * 1.2)} m</b>: even de luier van ${esc(tod.name)} checken?</span><span class="row2"><button class="primary" data-go="diaperdone">✓ Gedaan</button><button data-go="diaperlater">Later</button></span><button class="ghost small" data-go="toilet" style="width:100%">🧭 Breng me naar het toilet</button></div>`;
 }
 
+// ---------- history (Nu › 📜 / Gezin): everything recorded today, newest first; a misclick can be deleted
+// (with "Terugzetten") or moved to the right time; a ride that wasn't tapped can be added afterwards
+const HIST = { ride: '🎢', ate: '🍽️', pause: '🪑', diaper: '🚼', car: '🚗' };
+function historyItems() {
+  const f = S.fam; if (!f) return [];
+  const now = Date.now(), today = (t) => t && now - t < 14 * 3600e3;
+  const out = [];
+  for (const l of f.log || []) if (today(l.t)) for (const id of l.ids || []) if (byId[id]) out.push({ k: 'ride', id, t: l.t, icon: byId[id].icon, name: byId[id].name });
+  const hist = (f.hist || []).filter((h) => today(h.t) && HIST[h.k]);
+  // a meal/pause/check from before the history existed
+  for (const k of ['ate', 'pause', 'diaper']) if (today(f[k]) && !hist.some((h) => h.k === k && h.t === f[k])) hist.push({ k, t: f[k] });
+  const label = { ate: 'Gegeten', pause: 'Pauze', diaper: 'Luier gecheckt' };
+  for (const h of hist) out.push({ k: h.k, t: h.t, icon: HIST[h.k], name: label[h.k] });
+  if (today(f.car?.t)) out.push({ k: 'car', t: f.car.t, icon: '🚗', name: 'Parkeerplek bewaard', sub: f.car.note });
+  return out.sort((a, b) => b.t - a.t);
+}
+const hhmmIn = (t) => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+// "14:05" → today at that time (ms), null when invalid, in the future or > 14 h ago
+function timeToday(v) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v || ''); if (!m) return null;
+  const d = new Date(); d.setHours(+m[1], +m[2], 0, 0);
+  const t = d.getTime(), now = Date.now();
+  return t > now + 60e3 || now - t > 14 * 3600e3 ? null : Math.min(t, now);
+}
+function openHistory() {
+  const items = historyItems();
+  const rides = [...ATTRACTIONS].sort((a, b) => a.name.localeCompare(b.name, 'nl'));
+  openSheet(`<h2>📜 Geschiedenis van vandaag</h2>
+    <p class="small muted">Verkeerd getikt? Tik op ✕ om het te verwijderen of tik op de tijd om ze aan te passen. Dit geldt voor het hele gezin.</p>
+    ${items.length ? `<div class="list hist">${items.map((it) => {
+      const key = esc(JSON.stringify({ k: it.k, t: it.t, ...(it.id ? { id: it.id } : {}) }));
+      return `<div class="ride hrow"><span aria-hidden="true">${it.icon}</span><span><b>${esc(it.name)}</b>${it.sub ? `<br><span class="small muted">${esc(it.sub)}</span>` : ''}</span>
+        ${it.k === 'car' ? `<span class="small muted">${hhmm(it.t)}</span>` : `<input type="time" class="htime" value="${hhmmIn(it.t)}" data-hmove="${key}" aria-label="Tijd van ${esc(it.name)}">`}
+        <button class="ghost hdel" data-hdel="${key}" aria-label="Verwijder ${esc(it.name)}">✕</button></div>`;
+    }).join('')}</div>` : '<p class="muted">Nog niets vandaag.</p>'}
+    <div class="card" style="margin-top:12px"><h3 style="margin:0 0 6px">＋ Vergeten attractie</h3>
+      <p class="small muted" style="margin:0 0 8px">Gedaan maar niet getikt? Voeg ze hier toe (het plan blijft staan).</p>
+      <select id="histRide" aria-label="Attractie"><option value="">Kies een attractie…</option>${rides.map((a) => `<option value="${a.id}">${a.icon} ${esc(a.name)}</option>`).join('')}</select>
+      <div class="row2" style="margin-top:8px"><input type="time" id="histAddT" value="${hhmmIn(Date.now())}" aria-label="Hoe laat"><button class="primary" data-go="histadd">Toevoegen</button></div></div>`);
+}
+async function histDelete(it) {
+  const name = it.k === 'ride' ? byId[it.id]?.name : { ate: 'Gegeten', pause: 'Pauze', diaper: 'Luiercheck', car: 'Parkeerplek' }[it.k];
+  const car = S.fam.car;
+  const ok = it.k === 'car' ? await act({ type: 'car', lat: null }, true) : await act({ type: 'histdel', ...it }, true);
+  if (!ok) return;
+  // put it back exactly as it was
+  const back = it.k === 'ride' ? { type: 'ridelog', id: it.id, when: it.t } : it.k === 'car' ? { type: 'car', lat: car.lat, lon: car.lon, note: car.note } : { type: it.k, at: it.t };
+  toast(`${name} (${hhmm(it.t)}) verwijderd`, { label: 'Terugzetten', fn: async () => { if (await act(back, true)) { toast('Teruggezet'); if (!$('#sheet').hidden) openHistory(); render(); } } }, 7000);
+  if (!$('#sheet').hidden) openHistory();
+  render();
+}
+
 // ---------- pocket mode: screen on (black) so the location keeps coming while the phone is in a pocket
 // iOS home-screen apps only keep the screen on from iOS 18.4 (the API exists earlier but does nothing there)
 const iosOld = (() => { const m = navigator.userAgent.match(/OS (\d+)_(\d+)/); return /iPhone|iPad/.test(navigator.userAgent) && navigator.standalone && m && (+m[1] < 18 || (+m[1] === 18 && +m[2] < 4)); })();
@@ -527,8 +583,12 @@ function notesFor(part) {
 }
 const notesHtml = (n) => (n.length ? `<ul class="notes">${n.map(([i, t]) => `<li><span aria-hidden="true">${i}</span><span>${t}</span></li>`).join('')}</ul>` : '');
 
+// the plans as drawn on screen, by key: a tap starts exactly the plan the family saw, even when a quiet update
+// re-ordered S.plans since (indexes would point at another plan)
+const shownPlans = new Map();
+const shown = (p) => { if (shownPlans.size > 60) shownPlans.clear(); shownPlans.set(p.key, p); return esc(p.key); };
 function planActions(plan, chosen) {
-  if (!chosen) return `<button class="primary big" data-go="choose:0">🧭 Doen! Breng me erheen</button>`;
+  if (!chosen) return `<button class="primary big" data-go="choose:0" data-pkey="${shown(plan)}">🧭 Doen! Breng me erheen</button>`;
   const t = S.fam.target;
   const mine = plan.parts.indexOf(myPart(plan));
   const queued = t.queued && !t.q ? `<p class="queued">⏳ In de rij sinds ${hhmm(t.queued)} (${Math.max(0, Math.round((Date.now() - t.queued) / 60e3))} min)</p>` : '';
@@ -648,6 +708,7 @@ function renderNow() {
     html += '<p class="kicker">Doe nu dit</p>' + ticket(S.plans[0], false);
   }
   html += autoCard();
+  if (historyItems().length) html += '<button class="ghost small histbtn" data-go="history">📜 Geschiedenis · iets verkeerd getikt?</button>';
   if (!meId() && people().some((p) => p.kind === 'adult')) html += '<button class="ghost small whoami" data-go="onboard">🙋 Wie ben jij op deze gsm? Tik om te kiezen</button>';
   if (navigator.wakeLock && S.gps && !S.sim) html += '<button class="ghost small pocketbtn" data-go="pocket">🫥 Zakmodus: blijf volgen met de gsm in je zak <span class="muted">(±10% batterij/uur)</span></button>';
   if (S.auto) html += `<button class="ghost small pocketbtn" data-go="ot">📡 ${store.get('otActive', false) ? 'Volgen met de app dicht: aan ✅' : 'Volgen met de app dicht (OwnTracks)'}</button>`;
@@ -663,11 +724,11 @@ function renderNow() {
       const i = S.plans.indexOf(p);
       if (p.type === 'together') {
         const a = byId[p.parts[0].id];
-        return `<button class="alt" data-go="choose:${i}"><span class="ic">${icon(a)}</span>
+        return `<button class="alt" data-go="choose:${i}" data-pkey="${shown(p)}"><span class="ic">${icon(a)}</span>
           <span><span class="t">${esc(a.name)}</span><span class="s">Iedereen samen · ${mins(walkOf(a))} stappen</span></span>${waitBadge(a.id)}</button>`;
       }
       const [x, y] = p.parts; const a = byId[x.id];
-      return `<button class="alt" data-go="choose:${i}"><span class="ic">${icon(a)}</span>
+      return `<button class="alt" data-go="choose:${i}" data-pkey="${shown(p)}"><span class="ic">${icon(a)}</span>
         <span><span class="t">${esc(a.name)} <span class="muted">+ ${y.rest ? 'rust' : esc(byId[y.id]?.name)}</span></span>
         <span class="s">Splitsen · ${x.group.map((id) => emoji(person(id))).join('')} / ${y.group.map((id) => emoji(person(id))).join('')}</span></span>${waitBadge(a.id)}</button>`;
     }).join('') + '</div>';
@@ -899,8 +960,10 @@ function renderFam() {
     <div class="card"><h2>🏠 Op je beginscherm</h2>
       <ul class="steps small"><li><b>iPhone (Safari):</b> deelknop <span aria-hidden="true">⬆️</span> → <i>Zet op beginscherm</i>. Open de app daarna vanaf het beginscherm (nodig voor meldingen). Opent de app daar een leeg gezin? Plak dan hierboven de gezinslink.</li>
       <li><b>Android (Chrome):</b> menu ⋮ → <i>App installeren</i> of <i>Toevoegen aan startscherm</i>.</li></ul></div>
-    <div class="card"><h2>✓ Vandaag gedaan</h2>
-      ${Object.keys(S.fam.done || {}).length ? `<div class="list">${Object.entries(S.fam.done).map(([id, n]) => `<div class="ride" style="grid-template-columns:auto 1fr auto"><span aria-hidden="true">${byId[id]?.icon}</span><span><b>${esc(byId[id]?.name)}</b> <span class="muted">${num(n)}×</span></span><button data-undo="${id}">Ongedaan</button></div>`).join('')}</div>` : '<p class="muted small">Nog niets. Tik op “Gedaan” na een attractie.</p>'}</div>
+    <div class="card"><h2>📜 Geschiedenis van vandaag</h2>
+      ${(() => { const h = historyItems(); const rides = h.filter((x) => x.k === 'ride').length;
+        return `<p class="small muted">${h.length ? `${rides} attractie${rides === 1 ? '' : 's'}${h.length > rides ? ` · ${h.length - rides} andere` : ''}. Verkeerd getikt? Verwijder het of pas de tijd aan.` : 'Nog niets. Tik op “Gedaan” na een attractie.'}</p>`; })()}
+      <button class="primary" data-go="history" style="width:100%">📜 Bekijk en bewerk</button></div>
     <p class="muted small">Foto’s van attracties via Wikimedia Commons: ${[...new Set(Object.values(PHOTOS).map((p) => p.artist))].map(esc).join(', ')} (CC BY-SA 3.0/4.0, CC0, publiek domein; per foto vermeld).</p>
     <p class="muted small">Wachttijden: ThemeParks.wiki (live). Weer: MET Norway. Kaart: © OpenStreetMap-bijdragers. Foto’s blijven bewaard tot je ze verwijdert.</p>`;
   renderPush();
@@ -1078,10 +1141,9 @@ function guideHeading() {
     G.band = k;
     const text = !hasHeading ? 'De pijl wijst zoals op een kaart (noorden boven).'
       : [() => '⬆️ Rechtdoor', () => (rel > 0 ? '↗️ Schuin rechts' : '↖️ Schuin links'), () => (rel > 0 ? '➡️ Rechts afslaan' : '⬅️ Links afslaan'), () => '↩️ Draai je om'][k]();
-    if (text !== G.lastSay) {
-      sayEl.textContent = text;
-      // a cue within 3 s of the last one waits (G.lastSay stays old, so it's given on a later update), never lost
-      if (hasHeading && G.lastSay && Date.now() - (G.lastBuzz || 0) < 3000) return;
+    if (sayEl.textContent !== text) sayEl.textContent = text; // the screen always shows the current direction
+    // the buzz/voice cue: within 3 s of the last one it waits (G.lastSay stays old, so it's given on a later update)
+    if (text !== G.lastSay && !(hasHeading && G.lastSay && Date.now() - (G.lastBuzz || 0) < 3000)) {
       if (hasHeading && G.lastSay) { G.lastBuzz = Date.now(); buzz(text.includes('Rechtdoor') ? 10 : [30, 40, 30]); say(text.replace(/^\S+\s/, ''), true); }
       G.lastSay = text;
     }
@@ -1387,7 +1449,7 @@ async function finishPlan({ auto = false, at } = {}) {
     return;
   }
   const before = ids.map((id) => num(S.fam.done?.[id]));
-  if (!(await act({ type: 'done', ids, ...(t && auto ? { target: t.setAt } : {}), ...(plan && !unknown ? { part: i } : {}), ...(at ? { at } : {}) }, auto))) return auto ? false : undefined;
+  if (!(await act({ type: 'done', ids, ...(t && auto ? { target: t.setAt } : {}), ...(t && !auto ? { plan: t.setAt } : {}), ...(plan && !unknown ? { part: i } : {}), ...(at ? { at } : {}) }, auto))) return auto ? false : undefined;
   if (auto) {
     // only offer "Klopt niet" when our done really counted (not when the other phone had already finished it)
     const counted = ids.some((id, k) => num(S.fam.done?.[id]) > before[k]);
@@ -1400,7 +1462,12 @@ async function finishPlan({ auto = false, at } = {}) {
     render();
     return;
   }
-  celebrate(); scrollTo(0, 0);
+  // a misclick: "Ongedaan" in the toast takes the ride(s) back and puts the plan back (when nothing newer was chosen)
+  const counted = ids.some((id, k) => num(S.fam.done?.[id]) > before[k]);
+  celebrate(counted ? async () => {
+    for (const id of ids) await act({ type: 'undo', id }, true);
+    if (plan && !S.fam.target) await act({ type: 'target', plan, device }, true);
+  } : null); scrollTo(0, 0);
   if (!unknown && who.length && byId[rated]?.cat) rateSheet(rated, who); else photoMoment(ids);
 }
 // "we're done around 14:35 at the exit of X", rounded up to 5 minutes, sent to the family chat (and pushed)
@@ -2349,6 +2416,7 @@ document.addEventListener('click', async (e) => {
   if (d.filter) { S.filter = d.filter; renderList(); return; }
   if (d.fav) { buzz(); await act({ type: 'fav', id: d.fav, on: !(S.fam.favs || []).includes(d.fav) }); if (!$('#sheet').hidden && $('#sheet').querySelector(`[data-goride="${d.fav}"]`)) rideSheet(d.fav); return; }
   if (d.undo) { await act({ type: 'undo', id: d.undo }); return; }
+  if (d.hdel) { await histDelete(JSON.parse(d.hdel)); return; }
   if (d.quizwho) { S.quizWho = d.quizwho; quizSheet(null, true); return; }
   if (d.quizans != null && S.quizQ) {
     const q = S.quizQ, picked = +d.quizans, ok = picked === q.answer;
@@ -2372,7 +2440,7 @@ document.addEventListener('click', async (e) => {
     await act({ type: 'closed', id: d.closed, on });
     toast(on ? '🚫 Gemeld: ik stel deze attractie vandaag niet meer voor' : '✅ Weer open'); rideSheet(d.closed); return;
   }
-  if (d.doneone) { closeSheet(); if (S.guide) closeGuide(); await act({ type: 'done', ids: [d.doneone] }); celebrate(); photoMoment([d.doneone]); return; }
+  if (d.doneone) { const id = d.doneone; closeSheet(); if (S.guide) closeGuide(); if (!(await act({ type: 'done', ids: [id] }))) return; celebrate(() => act({ type: 'undo', id }, true)); photoMoment([id]); return; }
   if (d.dismiss) { S.dismissed[d.dismiss] = 1; store.set('dismissed', S.dismissed); renderBanners(); return; }
   if (d.goride) { const a = byId[d.goride]; closeSheet(); guideTap({ kind: 'ride-solo', id: a.id, name: a.name, icon: a.icon, lat: a.lat, lon: a.lon }); return; }
   if (d.food) { const f = byId[d.food]; closeSheet(); guideTap({ kind: 'food', id: f.id, name: f.name, icon: '🍽️', lat: f.lat, lon: f.lon }); return; }
@@ -2380,7 +2448,7 @@ document.addEventListener('click', async (e) => {
   if (d.ride && !t.matches('button.star')) { closeSheet(); rideSheet(d.ride); return; }
   const go = d.go; if (!go) return;
   if (go.startsWith('choose:')) {
-    const plan = S.plans[+go.slice(7)]; if (!plan) return;
+    const plan = (d.pkey && shownPlans.get(d.pkey)) || S.plans[+go.slice(7)]; if (!plan) return;
     guideTap(guideTargetFor(plan));
     act({ type: 'target', plan, device });
     return;
@@ -2428,12 +2496,22 @@ document.addEventListener('click', async (e) => {
     case 'guess': guessSheet(); break;
     case 'ready': {
       const plan = S.fam.target?.plan; if (!plan) break;
+      if (plan.type === 'split' && !meId()) { toast('Kies eerst wie je bent, dan weet ik welke helft klaar is'); onboard('who'); break; }
       await act({ type: 'ready', part: plan.parts.indexOf(myPart(plan)), device });
       toast('✅ De anderen krijgen een seintje'); break;
     }
     case 'untarget': await act({ type: 'untarget' }); break;
     case 'food': foodSheet(); break;
     case 'toilet': toiletGo(); break;
+    case 'history': openHistory(); break;
+    case 'histadd': {
+      const sel = $('#histRide'), tm = $('#histAddT');
+      const when = timeToday(tm?.value);
+      if (!sel?.value) { toast('Kies eerst een attractie'); break; }
+      if (when == null) { toast('Die tijd klopt niet (vandaag, niet later dan nu)'); break; }
+      if (await act({ type: 'ridelog', id: sel.value, when }, true)) { toast(`✓ ${byId[sel.value]?.name} toegevoegd om ${hhmm(when)}`); openHistory(); render(); }
+      break;
+    }
     case 'pause': await act({ type: 'pause' }); { const r = restSpot(pos()); toast(`🪑 Rust goed!${r ? ` Dichtbij: ${r.name} (${mins(walkOf(r))})` : ''}`); } break;
     case 'ate': await act({ type: 'ate' }); closeSheet(); if (S.guide) closeGuide(); toast('Smakelijk! 😋'); break;
     case 'sheetclose': closeSheet(); break;
@@ -2528,10 +2606,11 @@ document.addEventListener('click', async (e) => {
     case 'obskip': closeOnboard(); render(); break;
   }
 });
-function celebrate() {
+function celebrate(undo) {
   buzz([20, 40, 20]);
   const n = Object.values(S.fam?.done || {}).reduce((a, b) => a + num(b), 0);
-  toast(n && n % 5 === 0 ? `🎉 Al ${n} ritjes! Hier is het volgende.` : '✓ Gedaan! Hier is het volgende.');
+  const fix = undo ? { label: 'Ongedaan', fn: async () => { if (!$('#sheet').hidden) closeSheet(); await undo(); toast('Teruggezet. Ook later kan het via 📜 Geschiedenis.', null, 4000); render(); } } : null;
+  toast(n && n % 5 === 0 ? `🎉 Al ${n} ritjes! Hier is het volgende.` : '✓ Gedaan! Hier is het volgende.', fix, undo ? 7000 : undefined);
 }
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
@@ -2545,6 +2624,13 @@ document.addEventListener('keydown', (e) => {
 $('#sheetBack').addEventListener('click', closeSheet);
 document.addEventListener('change', async (e) => {
   const id = e.target.id;
+  if (e.target.dataset.hmove) {
+    const it = JSON.parse(e.target.dataset.hmove), to = timeToday(e.target.value);
+    if (to == null) { toast('Die tijd klopt niet (vandaag, niet later dan nu)'); e.target.value = hhmmIn(it.t); return; }
+    if (Math.abs(to - it.t) < 60e3) return;
+    if (await act({ type: 'histmove', ...it, to }, true)) { toast(`Tijd aangepast: ${hhmm(to)}`); openHistory(); render(); }
+    return;
+  }
   if (id === 'tfile') { importTickets([...e.target.files]); return; }
   if (id === 'camIn' || id === 'hdrCam') { const f = [...e.target.files]; e.target.value = ''; if (!$('#sheet').hidden && $('#sheet').contains(e.target)) closeSheet(); addPhotos(f, true); return; }
   if (id === 'questIn' && e.target.files[0]) {

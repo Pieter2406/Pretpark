@@ -102,11 +102,15 @@ export async function readTickets(files, onProgress = () => {}) {
         found.push({ code: r.text, format: r.format, crop: cropCode(c, r.position, linear), page, pageNo: i, source: file.name });
       }
     } } catch (e) { console.error(e); failed.push(file.name); found.length = before; continue; }
-    // pages without a code after the last ticket page are terms/ads: dropped (and counted). One between ticket pages is
-    // probably a ticket whose code wasn't read: kept, so its page can still be shown at the gate
+    // pages without a code before the first / after the last ticket page are cover/terms pages: dropped (and counted).
+    // One between ticket pages is probably a ticket whose code wasn't read: kept, so it can still be shown at the gate
     const mine = found.slice(before);
-    const lastCode = Math.max(-1, ...mine.filter((t) => t.code).map((t) => t.pageNo));
-    if (lastCode > 0) { const keep = mine.filter((t) => t.code || t.pageNo < lastCode); skipped += mine.length - keep.length; found.splice(before, found.length - before, ...keep); }
+    const codePages = mine.filter((t) => t.code).map((t) => t.pageNo);
+    const firstCode = Math.min(Infinity, ...codePages), lastCode = Math.max(-1, ...codePages);
+    if (lastCode > 0) {
+      const keep = mine.filter((t) => t.code || (t.pageNo > firstCode && t.pageNo < lastCode)); // no cover/terms page
+      skipped += mine.length - keep.length; found.splice(before, found.length - before, ...keep);
+    }
   }
   // one ticket per code (the same code on two pages is still one ticket)
   const seen = new Set();

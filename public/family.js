@@ -37,6 +37,8 @@ const PAST = 12 * 3600e3, FUTURE = 2 * 60e3;
 // a replayed action only counts as older than state written at t0 beyond the clock difference two phones may have
 const SKEW = 2 * 60e3;
 const older = (t, t0) => typeof t0 === 'number' && t < t0 - SKEW;
+// a time chosen in the history: today (≤ 14 h ago), never in the future
+const histTime = (x, now) => { const v = Number(x); if (!Number.isFinite(v) || v < now - 14 * 3600e3) throw new Error('bad time'); return Math.round(Math.min(v, now)); };
 
 // The time an action happened: the client's `at` when plausible, else the server's now.
 export function actionTime(act, now) {
@@ -129,6 +131,9 @@ export function apply(fam, act, now) {
       // "done" for a plan that is no longer the current one (the other phone, or the automatic detection on both
       // phones, already finished it): nothing to count twice
       if (act.target != null && (!target || target.setAt !== act.target)) break;
+      // a tapped "Gedaan" says which plan it ends (plan = setAt): when the other phone already finished that plan,
+      // both parents tapping must not count the ride twice (a plan that was replaced unfinished still counts)
+      if (act.plan != null && f.log.some((l) => l.s === act.plan)) break;
       const ids = (Array.isArray(act.ids) ? act.ids : []).filter(okId).slice(0, 3);
       // a queue nobody tapped "aan de beurt" for: estimate the wait as queue → done minus the ride and getting off.
       // Only the sender's own part (the other half may still be in line), only with a known posted wait, and not
@@ -142,7 +147,8 @@ export function apply(fam, act, now) {
         }
       }
       for (const id of ids) f.done[id] = (f.done[id] || 0) + 1;
-      f.log = [...f.log, { t, ids }].sort((a, b) => a.t - b.t).slice(-80);
+      const s = target && !beforeTarget() ? target.setAt : Number.isFinite(act.plan) ? act.plan : null;
+      f.log = [...f.log, { t, ids, ...(s != null ? { s } : {}) }].sort((a, b) => a.t - b.t).slice(-80);
       if (!beforeTarget()) f.target = null;
       break;
     }
@@ -237,9 +243,50 @@ export function apply(fam, act, now) {
       f.closed = c;
       break;
     }
-    case 'ate': f.ate = Math.max(f.ate || 0, t); break;
-    case 'diaper': f.diaper = Math.max(f.diaper || 0, t); break; // the toddler's diaper was checked/changed
-    case 'pause': f.pause = Math.max(f.pause || 0, t); break;
+    // meal / diaper check / pause: the newest time counts; each is also kept in f.hist so the history can show,
+    // move and delete it (a misclick)
+    case 'ate': case 'diaper': case 'pause':
+      f[act.type] = Math.max(f[act.type] || 0, t);
+      f.hist = [...(f.hist || []), { k: act.type, t }].sort((a, b) => a.t - b.t).slice(-60);
+      break;
+    // ---- history (Gezin › Geschiedenis): fix a misclick afterwards
+    // ridelog {id, when}: a ride done earlier but not tapped (doesn't touch the current plan)
+    case 'ridelog': {
+      if (!okId(act.id)) throw new Error('bad id');
+      const w = histTime(act.when, now);
+      f.done[act.id] = (f.done[act.id] || 0) + 1;
+      f.log = [...f.log, { t: w, ids: [act.id] }].sort((a, b) => a.t - b.t).slice(-80);
+      break;
+    }
+    // histdel {k: 'ride'|'ate'|'pause'|'diaper', t, id?}: delete that entry; histmove {..., to}: change its time
+    case 'histdel': case 'histmove': {
+      const at = Number(act.t), to = act.type === 'histmove' ? histTime(act.to, now) : null;
+      if (!Number.isFinite(at)) throw new Error('bad entry');
+      if (act.k === 'ride') {
+        if (!okId(act.id)) throw new Error('bad id');
+        const i = f.log.findIndex((l) => l.t === at && l.ids?.includes(act.id));
+        if (i < 0) break; // already gone (the other phone): nothing to do
+        const ids = f.log[i].ids.filter((x) => x !== act.id);
+        f.log = ids.length ? f.log.map((l, j) => (j === i ? { ...l, ids } : l)) : f.log.filter((_, j) => j !== i);
+        if (to != null) {
+          f.log = [...f.log, { t: to, ids: [act.id] }].sort((a, b) => a.t - b.t);
+          f.waits = (f.waits || []).map((w) => (w.id === act.id && w.t === at ? { ...w, t: to } : w));
+        } else {
+          if (f.done[act.id] > 1) f.done[act.id]--; else delete f.done[act.id];
+          f.waits = (f.waits || []).filter((w) => !(w.id === act.id && w.t === at)); // the wait estimated by that done
+        }
+      } else if (['ate', 'pause', 'diaper'].includes(act.k)) {
+        const k = act.k, list = f.hist || [];
+        const i = list.findIndex((h) => h.k === k && h.t === at);
+        if (i < 0 && f[k] !== at) break;
+        f.hist = list.filter((_, j) => j !== i);
+        if (to != null) f.hist = [...f.hist, { k, t: to }].sort((a, b) => a.t - b.t);
+        // the newest remaining time of that kind (an old value from before f.hist existed stays unless it was this one)
+        const rest = f.hist.filter((h) => h.k === k).map((h) => h.t);
+        f[k] = Math.max(0, ...rest, f[k] === at ? 0 : f[k] || 0);
+      } else throw new Error('bad entry');
+      break;
+    }
     case 'pos':
       if (!okDevice(act.device)) throw new Error('bad device');
       if ((f.positions[act.device]?.t || 0) > t) break; // a stale fix doesn't replace a newer one

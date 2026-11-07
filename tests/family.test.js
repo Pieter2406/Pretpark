@@ -364,3 +364,43 @@ test('undo: the ride also leaves the log (story) and its estimated wait', () => 
   f = apply(f, { type: 'undo', id }, NOW);
   assert.equal(f.done[id], undefined); assert.equal(f.log.length, 0); assert.equal(f.waits.length, 0);
 });
+
+test('history: delete or move a ride, meal, pause or diaper check; add a forgotten ride', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  const id = f.target.plan.parts[0].id;
+  f = apply(f, { type: 'done', ids: [id] }, NOW - 50 * 60e3);
+  const t0 = f.log[0].t;
+  // moved to another time: still done once, the log entry moves
+  f = apply(f, { type: 'histmove', k: 'ride', id, t: t0, to: NOW - 40 * 60e3 }, NOW);
+  assert.equal(f.done[id], 1); assert.deepEqual(f.log.map((l) => l.t), [NOW - 40 * 60e3]);
+  // deleted (misclick)
+  f = apply(f, { type: 'histdel', k: 'ride', id, t: NOW - 40 * 60e3 }, NOW);
+  assert.equal(f.done[id], undefined); assert.equal(f.log.length, 0);
+  // a forgotten ride added afterwards; doesn't touch the plan
+  const g = withTarget(together, NOW - 3600e3);
+  const h = apply(g, { type: 'ridelog', id, when: NOW - 20 * 60e3 }, NOW);
+  assert.equal(h.done[id], 1); assert.equal(h.log[0].t, NOW - 20 * 60e3); assert.ok(h.target);
+  assert.throws(() => apply(g, { type: 'ridelog', id, when: NOW - 20 * 3600e3 }, NOW)); // not today
+  // meals: deleting the newest falls back to the one before
+  f = apply(f, { type: 'ate' }, NOW - 5 * 3600e3);
+  f = apply(f, { type: 'ate' }, NOW - 10 * 60e3);
+  assert.equal(f.ate, NOW - 10 * 60e3);
+  f = apply(f, { type: 'histdel', k: 'ate', t: NOW - 10 * 60e3 }, NOW);
+  assert.equal(f.ate, NOW - 5 * 3600e3);
+  f = apply(f, { type: 'histmove', k: 'ate', t: NOW - 5 * 3600e3, to: NOW - 2 * 3600e3 }, NOW);
+  assert.equal(f.ate, NOW - 2 * 3600e3);
+  // an old value from before the history existed can still be deleted
+  const old = { ...newFamily(NOW - 3600e3), pause: NOW - 30 * 60e3 };
+  assert.equal(apply(old, { type: 'histdel', k: 'pause', t: NOW - 30 * 60e3 }, NOW).pause, 0);
+});
+
+test('done: both parents tapping "Gedaan" for the same plan counts once; an unfinished replaced plan still counts', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  const setAt = f.target.setAt, id = f.target.plan.parts[0].id;
+  f = apply(f, { type: 'done', ids: [id], plan: setAt }, NOW - 60e3); // phone A
+  f = apply(f, { type: 'done', ids: [id], plan: setAt }, NOW - 50e3); // phone B, before it saw A's
+  assert.equal(f.done[id], 1); assert.equal(f.log.length, 1);
+  // an offline tap for a plan that was replaced but never finished: counted
+  const g = apply(withTarget(together, NOW - 3600e3), { type: 'done', ids: [id], plan: 12345 }, NOW);
+  assert.equal(g.done[id], 1);
+});

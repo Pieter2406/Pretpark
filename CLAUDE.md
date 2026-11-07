@@ -353,3 +353,19 @@ No accounts; knowing the family id is the access.
 - Guide turn cues within 3 s wait instead of being lost; outbox gives up only after 6 tries and 15 min; "Wie ben jij"
   preselects only when no other phone chose anyone, and marks names chosen elsewhere; ticket pages without a code are
   dropped only after the last code page (counted in the toast), code-less de-dupe key includes the page image size.
+
+## History (📜 Geschiedenis) and undo
+- Nu (button under the plan, once something happened today) and Gezin (card) open a sheet with everything recorded
+  today, newest first: rides (from `fam.log`), meals, pauses, diaper checks (`fam.hist` [{k, t}], last 60) and the car
+  spot. Each row: a time field (moves it: `histmove {k, t, id?, to}`) and ✕ (`histdel`, toast "Terugzetten" re-adds it
+  with `ridelog`/the original action). "＋ Vergeten attractie" = `ridelog {id, when}` (counts the ride, keeps the plan).
+  Times must be today (≤ 14 h ago) and not in the future (`histTime` in family.js, `timeToday` in app.js).
+- Right after a tapped "Gedaan" the toast has "Ongedaan" (undo the ride(s) and put the plan back if nothing newer).
+
+## Review round 4 (7 Nov)
+- A tapped `done` carries `plan` (= target.setAt) and every log entry stores `s` (the plan it ended): both parents
+  tapping "Gedaan" for the same plan count it once; an offline tap for a replaced, unfinished plan still counts.
+- Plan buttons carry `data-pkey`; a tap starts the plan that was on screen (`shownPlans`), not whatever is at that index
+  now. A quiet act re-renders when it brought a changed target/ready/done. "Wij zijn klaar" in a split needs "wie ben jij".
+- Guide: the direction text always matches the arrow; only the buzz/voice cue waits 3 s. Ticket pages without a code
+  are kept only between the first and last code page (no cover pages).
