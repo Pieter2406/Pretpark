@@ -387,3 +387,8 @@ No accounts; knowing the family id is the access.
 - The ended target is kept in `fam.prev`; `undo {id, restore: setAt}` (sent by "Ongedaan"/"Klopt niet") puts it back
   as it was (queue, guesses, ready) and drops the waits that done estimated.
 - `histmove` and "Terugzetten" (`ridelog {s}`) keep the log entry's plan mark `s`, so double counting stays impossible.
+- Found via /api/diag (Pieter's iPhone, iOS 26.6.1 home-screen app): the original's upload arrived cut off ("TypeError:
+  No initial boundary string" in request.formData → 500) while the canvas-made thumbnail went fine. Now every photo
+  is read into memory right away (`solid()` in app.js: arrayBuffer → new File) before it is stored, and again before
+  it is sent; an unreadable one is reported (`read-file`) and skipped, a 5xx on one photo no longer stops the others.
+  500 responses carry `detail` (error name + message) so the phone's diagnostics show the reason. R2 gets the File itself.

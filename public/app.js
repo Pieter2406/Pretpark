@@ -1964,11 +1964,23 @@ async function loadKeep() {
   for (const k of all) if (!keepUrls.has(k.id) && (k.thumb || k.file)) keepUrls.set(k.id, URL.createObjectURL(k.thumb || k.file));
 }
 const fresh = new Map(); // photos added since the app opened: id → { file, thumb }
+// The photo's bytes in memory, as a new File. iOS Safari can send a File from the picker or from IndexedDB as an empty
+// or cut-off upload body ("No initial boundary string" on the server); a copy read into memory is always sent whole.
+// null (reported) when the phone can't read it at all.
+async function solid(blob, name) {
+  try {
+    const buf = await blob.arrayBuffer();
+    if (!buf.byteLength) throw new Error('empty file');
+    return new File([buf], name || blob.name || 'photo.jpg', { type: blob.type || 'image/jpeg', lastModified: blob.lastModified || Date.now() });
+  } catch (e) { diag('read-file', `${name || blob?.name || ''} ${blob?.type || ''} ${blob?.size ?? '?'} B: ${e?.name} ${e?.message}`); return null; }
+}
 async function addPhotos(files, fromCamera, caption = '') {
   const live = S.gps && !S.sim ? S.gps : null;
   let n = 0, memN = 0;
-  for (const file of files) {
-    if (!file.type.startsWith('image/') && !/\.(heic|heif)$/i.test(file.name)) continue;
+  for (const picked of files) {
+    if (!picked.type.startsWith('image/') && !/\.(heic|heif)$/i.test(picked.name)) continue;
+    // stored and sent as bytes in memory, not as a reference to the picker's file (see solid)
+    const file = (await solid(picked, picked.name)) || picked;
     const t = fromCamera ? Date.now() : (file.lastModified || Date.now());
     const here = live && Math.abs(Date.now() - t) < 10 * 60e3 ? live : null; // only tag a place when it was taken just now
     const { thumb, w, h } = await thumbOf(file);
@@ -2053,7 +2065,8 @@ async function processUploads() {
       if ((u.stage || 'thumb') !== 'thumb' || !k.thumb) continue;
       S.upMsg = `Delen ${i} van ${items.length}…`; if (S.tab === 'album') renderAlbum();
       const fd = new FormData();
-      fd.append('thumb', k.thumb, 'thumb.jpg');
+      const tb = await solid(k.thumb, 'thumb.jpg'); if (!tb) continue;
+      fd.append('thumb', tb, 'thumb.jpg');
       fd.append('meta', JSON.stringify({ ...u.meta, thumbOnly: true, size: k.file.size }));
       const res = await postPhoto(u, fd, 60e3);
       if (fail(res)) { stop = true; break; }
@@ -2070,9 +2083,12 @@ async function processUploads() {
       if (u.dropped || goneIds.has(u.id)) continue;
       const size = k.file.size;
       S.upMsg = `Origineel ${i} van ${items.length} (${mb(size)})…`; if (S.tab === 'album') renderAlbum();
+      // read the original into memory first: a stored file can come out empty on iOS (then: try again later)
+      const body = await solid(k.file, k.file.name || `${u.id}.jpg`);
+      if (!body) continue;
       const fd = new FormData();
-      fd.append('full', k.file, k.file.name || `${u.id}.jpg`);
-      if (k.thumb) fd.append('thumb', k.thumb, 'thumb.jpg');
+      fd.append('full', body, body.name);
+      const tb = k.thumb && (await solid(k.thumb, 'thumb.jpg')); if (tb) fd.append('thumb', tb, 'thumb.jpg');
       fd.append('meta', JSON.stringify(u.meta));
       const res = await postPhoto(u, fd, Math.min(15 * 60e3, 60e3 + size / 30));
       if (fail(res)) break;
@@ -2091,7 +2107,8 @@ async function processUploads() {
         if (err === 'bad photo' || err === 'photo too big' || err === 'deleted') {
           await dropFromQueue(u, k, err);
           if (err !== 'deleted') toast('Eén foto kon niet online, ze blijft wel op deze gsm');
-        } else break;
+        } else if (res.status >= 500) continue; // this one failed (e.g. a cut-off body): the next photos still go
+        else break;
       }
     }
   } finally {
