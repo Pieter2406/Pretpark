@@ -534,3 +534,10 @@ html { transition: background-color .4s; }
 .hdel { min-width: 44px; min-height: 44px; font-size: 1.1rem; }
 #histRide, #histAddT { font: inherit; font-size: 16px; width: 100%; min-height: 44px; border-radius: 12px; border: 1px solid var(--line, #ccc); background: var(--bg, #fff); color: inherit; padding: 0 10px; }
 .histbtn { width: 100%; margin-top: 6px; }
+
+/* shows (🎭): the next show on Nu, past rows dimmed in the day's programme */
+.showcard { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; background: var(--surface); border-radius: 16px; padding: 10px 12px; margin: 10px 0; border: 2px solid var(--plum, #7a3fb0); }
+.showcard .ic { font-size: 1.8rem; }
+.showcard .row2 { grid-column: 1 / -1; margin-top: 4px; }
+.showbtn { width: 100%; margin-top: 8px; }
+.hist .past { opacity: .5; }

@@ -142,3 +142,22 @@ test('went home early: no park tips when the phone is far from Walibi', () => {
   assert.deepEqual(decide(home, live, { best: true, fav: true }).notes, []);
   assert.ok(decide(famAt(NOW - 6 * 3600e3), live).notes.some((n) => n.tag === 'pause'));
 });
+
+test('show reminder: 15–25 min before a show on an Ibilaw day, once, only in the park and not in a queue', async () => {
+  const { showsOn, dayKind } = await import('../public/shows.js');
+  assert.equal(dayKind('2026-11-07'), 'ext'); assert.equal(dayKind('2026-11-06'), 'day'); assert.equal(dayKind('2026-12-01'), null);
+  assert.deepEqual(showsOn('2026-11-07').filter((s) => s.id === 'bill-show').map((s) => s.hm), ['13:30', '15:00', '16:30', '18:00']);
+  // 14:40 in Brussels on 7 Nov: Bill: A Fairy Tale at 15:00 is in 20 min
+  const t = Date.UTC(2026, 10, 7, 13, 40);
+  const live = { ...allOpen(), localTime: '2026-11-07T14:40:00Z', minutesLeft: 440, t, open: t - 4 * 3600e3 };
+  const fam = { ...newFamily(t - 5 * 3600e3), positions: { [DEV]: { lat: 50.699, lon: 4.59, t } } };
+  const prefs = { best: false, fav: false, food: false };
+  const r1 = decideNotifications({ fam, deviceId: DEV, live, now: t, prefs, memo: {} });
+  const n = r1.notes.find((x) => x.tag === 'show');
+  assert.ok(n && /15:00: Bill: A Fairy Tale/.test(n.title), JSON.stringify(r1.notes));
+  const r2 = decideNotifications({ fam, deviceId: DEV, live, now: t + 9 * 60e3, prefs, memo: { ...r1.memo, sent: {} } });
+  assert.ok(!r2.notes.some((x) => x.tag === 'show')); // once
+  assert.ok(!decideNotifications({ fam, deviceId: DEV, live, now: t, prefs: { ...prefs, shows: false }, memo: {} }).notes.some((x) => x.tag === 'show'));
+  const away = { ...fam, positions: {} };
+  assert.ok(!decideNotifications({ fam: away, deviceId: DEV, live, now: t, prefs, memo: {} }).notes.some((x) => x.tag === 'show'));
+});

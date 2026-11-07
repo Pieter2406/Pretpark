@@ -1,6 +1,7 @@
 // Planner: pure functions on plain data, shared by the browser (app.js) and the Worker (cron notifications).
 // Nothing here touches the DOM, storage or the network.
 import { ATTRACTIONS, FOOD } from './data.js';
+import { nextShow } from './shows.js';
 
 export const WALK_M_PER_MIN = 60; // relaxed pace with a toddler and a pregnant adult
 export const PATH_FACTOR = 1.35; // straight line → real path, when no path graph is available
@@ -372,6 +373,17 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo, toi
   }
   const date = new Date(now);
   const local = live.localTime ? new Date(live.localTime) : date;
+  // 2c. a show (Ibilaw) starts in 15–25 min: only on a phone in the park, not while the family stands in a queue
+  const queueOpen = Object.values(target?.q || {}).some((q) => !q.b && now - q.t < 90 * 60e3);
+  if (!notes.length && prefs.shows !== false && !quiet && here && !queueOpen && live.localTime) {
+    const clock = parkClock(live, now), date = String(live.localTime).slice(0, 10);
+    const n = clock && nextShow(date, clock.now + 15);
+    if (n && n.min - clock.now <= 25 && memo.show !== n.key) {
+      memo.show = n.key;
+      notes.push({ tag: 'show', title: `${n.icon} ${n.roughly ? 'Vanaf ±' : 'Om '}${n.hm}: ${n.name}`,
+        body: `${n.where}${n.lat ? `, ${walkMin(walk(n))} min stappen` : ''}. ${n.kind === 'parade' ? 'Zoek een plekje langs de laan.' : 'Gratis; kom op tijd, de zaal loopt snel vol.'}`, url: '/?shows=1' });
+    }
+  }
   // 3. time to eat
   const timeLeft = live.minutesLeft == null || live.minutesLeft > 45; // no meal/rest tips while the park is closing
   if (!notes.length && prefs.food !== false && !quiet && timeLeft && isMealTime(local) && now - (fam.ate || 0) > 3 * 3600e3) {

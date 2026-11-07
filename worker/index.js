@@ -353,7 +353,7 @@ async function push(request, env) {
   }
   if (request.method !== 'POST') throw fail(405, 'method not allowed');
   if (!okFamily(body.family)) throw fail(400, 'bad family');
-  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false, chat: body.prefs?.chat !== false, auto: body.prefs?.auto !== false, diaper: body.prefs?.diaper !== false };
+  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false, chat: body.prefs?.chat !== false, auto: body.prefs?.auto !== false, diaper: body.prefs?.diaper !== false, shows: body.prefs?.shows !== false };
   const s = body.sub;
   if (s) {
     if (!okEndpoint(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) throw fail(400, 'bad subscription');

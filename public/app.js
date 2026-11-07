@@ -7,6 +7,7 @@ import { QUESTS, FACTS } from './fun.js';
 import { freshTracker, addFix, detect, farState } from './activity.js';
 import { makePark, pathLength, bearingXY } from './route.js';
 import { apply, phoneOf } from './family.js';
+import { showsOn, spookyOn, nextShow, dayKind, ADVICE } from './shows.js';
 import { idb } from './idb.js';
 import { PHOTOS } from './photos.js';
 
@@ -438,6 +439,42 @@ function diaperCard() {
   return `<div class="autoq"><span>🚼 Toilet op <b>${Math.round(wc.d * 1.2)} m</b>: even de luier van ${esc(tod.name)} checken?</span><span class="row2"><button class="primary" data-go="diaperdone">✓ Gedaan</button><button data-go="diaperlater">Later</button></span><button class="ghost small" data-go="toilet" style="width:100%">🧭 Breng me naar het toilet</button></div>`;
 }
 
+// ---------- shows (Ibilaw): the next one on Nu, the whole day in a sheet (data + sources in shows.js)
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+const inMin = (m) => (m <= 0 ? 'nu' : m < 60 ? `over ${m} min` : `over ${Math.floor(m / 60)} u ${String(m % 60).padStart(2, '0')}`);
+function showCard() {
+  if (!dayKind(todayStr()) || (S.live?.close && Date.now() > S.live.close)) return '';
+  const n = nextShow(todayStr(), nowMin(), 5);
+  if (!n || n.min - nowMin() > 90) return '<button class="ghost small showbtn" data-go="shows">🎭 Shows & Halloween vandaag</button>';
+  const m = n.min - nowMin();
+  return `<div class="showcard"><span class="ic" aria-hidden="true">${n.icon}</span><span><b>${esc(n.name)}</b> · ${n.roughly ? 'vanaf ±' : ''}${n.hm} <span class="muted">(${inMin(m)})</span><br><span class="small muted">${esc(n.where)}</span></span>
+    <span class="row2">${n.lat ? `<button data-showgo="${esc(n.id)}">🧭 Erheen</button>` : ''}<button data-go="shows">Alle shows</button></span></div>`;
+}
+function openShows() {
+  const date = todayStr(), k = dayKind(date), now = nowMin();
+  if (!k) { openSheet('<h2>🎭 Shows</h2><p class="muted">Vandaag is er geen Halloween-programma (Ibilaw loopt van 10 oktober tot 11 november 2026).</p>'); return; }
+  const shows = showsOn(date), spooky = spookyOn(date);
+  const tod = toddlerOf(people());
+  const showRow = (s) => { const past = s.min < now - 10; return `<div class="ride hrow ${past ? 'past' : ''}"><span aria-hidden="true">${s.icon}</span><span><b>${s.roughly ? '±' : ''}${s.hm}</b> ${esc(s.name)}<br><span class="small muted">${esc(s.where)}</span></span>
+    ${!past && s.lat ? `<button class="ghost" data-showgo="${esc(s.id)}" aria-label="Breng me naar ${esc(s.name)}">🧭</button>` : `<span class="small muted">${past ? 'voorbij' : ''}</span>`}</div>`; };
+  const spRow = (s) => { const open = now >= s.from && now < s.to; return `<div class="ride hrow ${now >= s.to ? 'past' : ''}"><span aria-hidden="true">${s.icon}</span><span><b>${esc(s.name)}</b> <span class="small">${s.fromHm}–${s.toHm}${open ? ' · <b>nu open</b>' : ''}</span><br><span class="small muted">${esc(s.where)}${s.near ? ` · bij ${esc(s.near)}` : ''} · ${esc(s.price)}</span></span>
+    ${s.lat && now < s.to ? `<button class="ghost" data-showgo="${esc(s.id)}" aria-label="Breng me naar ${esc(s.name)}">🧭</button>` : ''}</div>`; };
+  openSheet(`<h2>🎭 Shows & Halloween vandaag</h2>
+    <p class="small muted">${k === 'ext' ? 'Verlengde Halloweendag: open tot 22:00.' : 'Halloweendag: open tot 18:00.'} Tijden van walibi.be (gecontroleerd 7 nov); kijk bij twijfel op het bord aan de ingang.</p>
+    <h3>Shows</h3><div class="list hist">${shows.map(showRow).join('')}</div>
+    <p class="small muted">${shows.map((s) => s.about).filter((x, i, a) => a.indexOf(x) === i).map(esc).join(' ')} Het Tiki Theater staat niet op de kaart: 🧭 brengt je naar de Tiki-Bar ernaast.</p>
+    <h3>Spookhuizen</h3><div class="list hist">${spooky.filter((s) => s.kind === 'house').map(spRow).join('')}</div>
+    <h3>Scare zones</h3><div class="list hist">${spooky.filter((s) => s.kind === 'zone').map(spRow).join('')}</div>
+    ${spooky.some((s) => s.kind === 'food') ? `<h3>Eten</h3><div class="list hist">${spooky.filter((s) => s.kind === 'food').map(spRow).join('')}</div>` : ''}
+    <p class="small">⚠️ ${esc(ADVICE)}${tod ? ` Met ${esc(tod.name)}: de show en Bill's procession zijn het leukst; scare zones en spookhuizen liever niet.` : ''}</p>`);
+}
+function showGo(id) {
+  const all = [...showsOn(todayStr()), ...spookyOn(todayStr())];
+  const s = all.find((x) => x.id === id); if (!s?.lat) return;
+  closeSheet(); guideTap({ kind: 'show', id: 'show-' + s.id, name: s.name, icon: s.icon, lat: s.lat, lon: s.lon });
+}
+
 // ---------- history (Nu › 📜 / Gezin): everything recorded today, newest first; a misclick can be deleted
 // (with "Terugzetten") or moved to the right time; a ride that wasn't tapped can be added afterwards
 const HIST = { ride: '🎢', ate: '🍽️', pause: '🪑', diaper: '🚼', car: '🚗' };
@@ -765,6 +802,7 @@ function renderNow() {
     html += '<p class="kicker">Doe nu dit</p>' + ticket(S.plans[0], false);
   }
   html += autoCard();
+  html += showCard();
   if (historyItems().length) html += '<button class="ghost small histbtn" data-go="history">📜 Geschiedenis · iets verkeerd getikt?</button>';
   if (!meId() && people().some((p) => p.kind === 'adult')) html += '<button class="ghost small whoami" data-go="onboard">🙋 Wie ben jij op deze gsm? Tik om te kiezen</button>';
   if (navigator.wakeLock && S.gps && !S.sim) html += '<button class="ghost small pocketbtn" data-go="pocket">🫥 Zakmodus: blijf volgen met de gsm in je zak <span class="muted">(±10% batterij/uur)</span></button>';
@@ -1030,7 +1068,7 @@ function renderFam() {
 // ---------- push notifications
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const pushPrefs = () => ({ chat: true, auto: true, diaper: true, ...store.get('pushPrefs', { fav: true, best: true, food: true, down: true }) });
+const pushPrefs = () => ({ chat: true, auto: true, diaper: true, shows: true, ...store.get('pushPrefs', { fav: true, best: true, food: true, down: true }) });
 async function renderPush() {
   const body = $('#pushBody'); if (!body) return;
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -1047,7 +1085,7 @@ async function renderPush() {
   const tog = (k, t) => `<label class="tog"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}> ${t}</label>`;
   body.innerHTML = sub
     ? `<p class="small">✅ Meldingen staan aan op deze gsm.</p>
-      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}${tog('chat', '💬 Berichten in de gezinschat')}${tog('auto', '🤖 Automatisch herkend (met OwnTracks)')}${toddlerOf(people()) ? tog('diaper', '🚼 Luiercheck als je langs een toilet komt') : ''}</div>
+      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}${tog('chat', '💬 Berichten in de gezinschat')}${tog('auto', '🤖 Automatisch herkend (met OwnTracks)')}${toddlerOf(people()) ? tog('diaper', '🚼 Luiercheck als je langs een toilet komt') : ''}${tog('shows', '🎭 Show begint binnen 20 min')}</div>
       <div class="row2"><button data-go="pushtest">Testmelding</button><button data-go="pushoff">Uitzetten</button></div>`
     : `<p class="small muted">Krijg een seintje als een favoriet kort wordt, als er iets beters is, als het etenstijd is, als jullie attractie stilvalt of als de anderen klaar zijn. Ook als de app dicht is.</p>
       <button class="primary big" data-go="pushon">🔔 Meldingen aanzetten</button>`;
@@ -2513,6 +2551,7 @@ document.addEventListener('click', async (e) => {
   if (d.filter) { S.filter = d.filter; renderList(); return; }
   if (d.fav) { buzz(); await act({ type: 'fav', id: d.fav, on: !(S.fam.favs || []).includes(d.fav) }); if (!$('#sheet').hidden && $('#sheet').querySelector(`[data-goride="${d.fav}"]`)) rideSheet(d.fav); return; }
   if (d.undo) { await act({ type: 'undo', id: d.undo }); return; }
+  if (d.showgo) { showGo(d.showgo); return; }
   if (d.hdel) { await histDelete(JSON.parse(d.hdel)); return; }
   if (d.quizwho) { S.quizWho = d.quizwho; quizSheet(null, true); return; }
   if (d.quizans != null && S.quizQ) {
@@ -2615,6 +2654,7 @@ document.addEventListener('click', async (e) => {
     case 'food': foodSheet(); break;
     case 'toilet': toiletGo(); break;
     case 'history': openHistory(); break;
+    case 'shows': openShows(); break;
     case 'histadd': {
       const sel = $('#histRide'), tm = $('#histAddT');
       const when = timeToday(tm?.value);
@@ -2846,6 +2886,7 @@ async function afterFamily() {
       else if (u.searchParams.get('food')) foodSheet();
       else if (u.searchParams.get('tickets')) { S.tab = 'tickets'; render(); }
       else if (u.searchParams.get('chat')) openChat();
+      else if (u.searchParams.get('shows')) openShows();
       else { pollFamily(); loadLive(); }
     });
     // Updates: an iPhone home-screen app is never reloaded by itself and iOS rarely looks for a new service worker,
@@ -2886,6 +2927,7 @@ async function afterFamily() {
     if (url.searchParams.get('food')) foodSheet();
     if (url.searchParams.get('tickets')) { S.tab = 'tickets'; render(); }
     if (url.searchParams.get('chat')) openChat();
+    if (url.searchParams.get('shows')) openShows();
   } catch (err) {
     console.error(err);
     $('#view-now').innerHTML = `<div class="card"><h2>${S.auth ? 'Even opnieuw inloggen' : 'Oei, dat lukte niet'}</h2><p class="muted">${S.auth ? 'Je sessie is verlopen.' : 'Geen verbinding en nog geen opgeslagen gegevens op deze gsm.'}</p><button class="primary" data-go="relogin">Opnieuw</button></div>`

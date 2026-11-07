@@ -419,3 +419,17 @@ No accounts; knowing the family id is the access.
   "🔥 Topper" / "🔥 Aanrader". Sim (20 days; normal / busy / breakdowns / flat): different headliners per day 4.3 → 6.1,
   person-rides on toppers +27–34%, rides per person −1.5 (−5%), +15 min queueing, +0.4 km; pregnant adult and toddler
   ≈ unchanged. 0.6 was the milder option (+18–27% toppers, −0.6 rides). The sim reports `coolRides` / `cool1`.
+
+## Shows (Ibilaw 2026)
+- `public/shows.js` (pure data + helpers, in the SW shell): `SHOWS` (Bill: A Fairy Tale in the Tiki Theater, 13:30 / 15:00
+  / 16:30 (+ 18:00 on extended days); Bill's procession from ±17:00, ±19:00 on extended days), `SPOOKY` (haunted houses
+  The Grand Hotel, Aquarium, Silence, Mine Blast; scare zones Hecatomb, Innocence, Arachnophobia, Psycho Circus; the
+  Freaky Pizza Festival) with hours per day type, `EXTENDED` days (open until 22:00, incl. 7 Nov), `dayKind`, `showsOn`,
+  `spookyOn`, `nextShow`. Sources: walibi.be show + bill-procession pages (times), ooparc.com Ibilaw 2026 guide (house
+  and zone hours, places, prices). ThemeParks.wiki has no shows for Walibi. The Tiki Theater isn't in OSM: the guide
+  goes to the Tiki-Bar next to it. Houses/zones are placed at the ride the guide names ("bij Kondaa" …).
+- Nu: `showCard()` (next show within 90 min: time, "over n min", 🧭 Erheen, Alle shows; else a "🎭 Shows & Halloween
+  vandaag" button). Sheet `openShows()`: shows (past dimmed), houses, zones, food, advice (houses not < 16, anti-monster
+  badge < 12, toddler hint). Push rule 2c: 15–25 min before a show, once per show (`memo.show`), only with a fresh
+  position in the park and no open queue, pref `shows` (Gezin › Meldingen). Deep link `/?shows=1`.
+- Next season: replace the dates/times in shows.js (they are for 2026 only; outside the season nothing is shown).
