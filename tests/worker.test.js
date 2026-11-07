@@ -360,3 +360,26 @@ test('OwnTracks: token per phone, background fixes → queue → done (+ push), 
   assert.equal((await call('GET', `/api/otsetup/${f.id}?device=${dev}`)).data.active, false);
   assert.equal((await call('POST', `/api/otsetup/${f.id}`, { device: '<x>' })).status, 400);
 });
+
+test('OwnTracks review fixes: oversized body refused before reading; push respects the "auto" setting and the family', async () => {
+  const f = await newFam();
+  const dev = 'devot0000002';
+  await call('POST', '/api/family/' + f.id, { type: 'me', device: dev, person: 'p1' });
+  const plan = together.find((p) => p.type === 'together');
+  const a = ATTRACTIONS.find((x) => x.id === plan.parts[0].id);
+  const now = Date.now();
+  await call('POST', '/api/family/' + f.id, { type: 'target', plan, device: dev, at: now - 60 * 60e3 });
+  const keys = await subKeys();
+  await call('POST', '/api/push', { device: dev, family: f.id, sub: { endpoint: 'https://fcm.googleapis.com/fcm/send/ot2', keys }, prefs: { auto: false } });
+  const token = (await call('POST', `/api/otsetup/${f.id}`, { device: dev })).data.token;
+  const big = await call('POST', '/api/ot/' + token, 'x', { 'content-length': '500000' });
+  assert.deepEqual(big.data, []);
+  const batch = [];
+  for (let i = 0; i < 60; i++) batch.push({ _type: 'location', lat: a.lat, lon: a.lon, acc: 8, tst: Math.round((now - 40 * 60e3 + i * 30e3) / 1000) });
+  pushes.length = 0;
+  await call('POST', '/api/ot/' + token, batch);
+  await settle();
+  const fam = (await call('GET', '/api/family/' + f.id)).data.fam;
+  assert.ok(fam.target?.q?.[0]?.auto, 'queued');
+  assert.ok(!pushes.some((p) => p.url.includes('/ot2')), 'no push: auto notifications off');
+});

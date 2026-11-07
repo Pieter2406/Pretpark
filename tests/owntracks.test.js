@@ -43,3 +43,17 @@ test('actionsFor: done in a split only says "ready" while the other half is busy
   const q2 = actionsFor({ type: 'queue', at: NOW, key: 'q:1' }, { ...T, wait: 10 }, fam, 'dev00000001')[0].act.aid;
   assert.equal(q1, q2); assert.match(q1, /^[a-z0-9]{6,24}$/);
 });
+
+test('review fixes: newest 300 fixes; a split with an unknown person on this phone acts for nobody', async () => {
+  const { targetFor } = await import('../worker/owntracks.js');
+  const t = Math.round(NOW / 1000);
+  const many = Array.from({ length: 700 }, (_, i) => ({ _type: 'location', lat: 50.7, lon: 4.59, acc: 5, tst: t - 700 + i }));
+  const f = otFixes(JSON.stringify(many), NOW);
+  assert.equal(f.length, 300);
+  assert.equal(f.at(-1).t, (t - 1) * 1000);
+  const a = ATTRACTIONS[0], b = ATTRACTIONS[1];
+  const split = { type: 'split', meet: a.id, parts: [{ group: ['p1', 'p3'], id: a.id }, { group: ['p2', 'p4'], id: b.id }] };
+  assert.equal(targetFor({ target: { plan: split, setAt: 1 }, me: { d1: 'p9' } }, 'd1', null), null);
+  assert.equal(targetFor({ target: { plan: split, setAt: 1 }, me: {} }, 'd1', null), null);
+  assert.equal(targetFor({ target: { plan: split, setAt: 1 }, me: { d1: 'p2' } }, 'd1', null).i, 1);
+});

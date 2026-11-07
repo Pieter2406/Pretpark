@@ -846,7 +846,7 @@ function renderFam() {
 // ---------- push notifications
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const pushPrefs = () => ({ chat: true, ...store.get('pushPrefs', { fav: true, best: true, food: true, down: true }) });
+const pushPrefs = () => ({ chat: true, auto: true, ...store.get('pushPrefs', { fav: true, best: true, food: true, down: true }) });
 async function renderPush() {
   const body = $('#pushBody'); if (!body) return;
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -863,7 +863,7 @@ async function renderPush() {
   const tog = (k, t) => `<label class="tog"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}> ${t}</label>`;
   body.innerHTML = sub
     ? `<p class="small">✅ Meldingen staan aan op deze gsm.</p>
-      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}${tog('chat', '💬 Berichten in de gezinschat')}</div>
+      <div style="display:grid">${tog('fav', '⭐ Wachttijd zakt bij een favoriet')}${tog('best', '👉 Nieuwe beste suggestie')}${tog('food', '🍽️ Tijd om te eten / pauze')}${tog('down', '⚠️ Attractie in storing')}${tog('chat', '💬 Berichten in de gezinschat')}${tog('auto', '🤖 Automatisch herkend (met OwnTracks)')}</div>
       <div class="row2"><button data-go="pushtest">Testmelding</button><button data-go="pushoff">Uitzetten</button></div>`
     : `<p class="small muted">Krijg een seintje als een favoriet kort wordt, als er iets beters is, als het etenstijd is, als jullie attractie stilvalt of als de anderen klaar zijn. Ook als de app dicht is.</p>
       <button class="primary big" data-go="pushon">🔔 Meldingen aanzetten</button>`;
@@ -1451,20 +1451,28 @@ async function otStatus(create) {
   try {
     let st = await api(`/api/otsetup/${S.famId}?device=${device}`);
     if (!st.active && create && meId()) st = await api(`/api/otsetup/${S.famId}`, { method: 'POST', body: { device } }); // a link to tap right away
+    const relink = st?.token !== S.ot.st?.token;
     S.ot.st = st; store.set('otActive', !!st.active && !!st.info?.t);
+    // a poll only refreshes the status line (an open "Zelf instellen" or a selection stays as it is)
+    if (relink || create || !$('#otview .otstate')) renderOt(); else { const n = document.createElement('div'); n.innerHTML = otState(); $('#otview .otstate').replaceWith(n.firstElementChild || n); }
+    return;
   } catch { S.ot.st = S.ot.st || null; }
   renderOt();
 }
-function renderOt() {
-  const el = $('#otview'); if (!el || el.hidden) return;
+function otState() {
   const st = S.ot?.st, info = st?.info || {};
   const fresh = info.t && Date.now() - info.t < 10 * 60e3;
-  const state = !S.famId ? '' : !meId() ? '<div class="otstate warn">🙋 Kies eerst wie je bent op deze gsm, dan weet Pretpark welke rij van jou is. <button class="primary" data-go="onboard">Kies</button></div>'
+  return !S.famId ? '<div class="otstate"></div>' : !meId() ? '<div class="otstate warn">🙋 Kies eerst wie je bent op deze gsm, dan weet Pretpark welke rij van jou is. <button class="primary" data-go="onboard">Kies</button></div>'
     : !st ? '<div class="otstate">⏳ Laden… (geen bereik?)</div>'
     : !st.active ? '<div class="otstate">⚪ Nog niet gekoppeld.</div>'
     : fresh ? `<div class="otstate ok">✅ <b>Verbonden.</b> Laatste locatie ${hhmm(info.t)} (±${info.acc ?? '?'} m${info.batt != null ? `, batterij ${info.batt}%` : ''}). Je mag Pretpark nu sluiten.</div>`
     : info.t ? `<div class="otstate warn">⚠️ Laatste locatie om ${hhmm(info.t)}: al een tijd niets. Staat OwnTracks op <b>Move</b> en mag het <b>altijd</b> je locatie gebruiken?</div>`
     : '<div class="otstate">⏳ Gekoppeld, wacht op de eerste locatie. Tik in OwnTracks op <b>↑</b> (publiceer) om te testen.</div>';
+}
+function renderOt() {
+  const el = $('#otview'); if (!el || el.hidden) return;
+  const st = S.ot?.st;
+  const state = otState();
   const store1 = isAndroid ? `<a class="btn primary" href="${OT_ANDROID}" target="_blank" rel="noopener">▶️ OwnTracks in de Play Store</a>`
     : isIOS ? `<a class="btn primary" href="${OT_IOS}" target="_blank" rel="noopener"> App Store: OwnTracks</a>`
     : `<a class="btn" href="${OT_IOS}" target="_blank" rel="noopener">iPhone: App Store</a> <a class="btn" href="${OT_ANDROID}" target="_blank" rel="noopener">Android: Play Store</a>`;
@@ -1491,7 +1499,7 @@ function renderOt() {
     </ol>
     <div class="card ot-info"><h3>Goed om te weten</h3>
       <ul class="small"><li>🔋 Move-modus gebruikt de GPS op de achtergrond: reken op flink wat batterij. Een powerbank helpt.</li>
-      <li>🔒 Je locatie gaat alleen naar jullie Pretpark-server. Pretpark houdt ze maar 45 minuten bij, en de koppeling verdwijnt na een dag zonder locaties.</li>
+      <li>🔒 Je locatie gaat alleen naar jullie Pretpark-server. Die houdt het spoor van de laatste 45 minuten bij (om te herkennen wat jullie doen) en je laatste positie (het puntje bij je partner). De koppeling verdwijnt na een dag zonder locaties.</li>
       <li>🤖 Wat het herkent: in de rij, aan de beurt, gedaan (bij splitsen: “wij zijn klaar”), uit de rij, eten, rust en de parkeerplek. Klopt iets niet: open Pretpark en tik “Klopt niet”.</li>
       <li>🌙 Na het park: tik hieronder op <b>Stoppen</b> en zet OwnTracks op <b>Quiet</b> of verwijder de app.</li></ul></div>
     ${st?.active ? '<div class="row2"><button data-go="otstop">⏹️ Stoppen met volgen</button><button data-go="otnew">🔄 Nieuwe koppeling</button></div>' : ''}`;

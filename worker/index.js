@@ -163,30 +163,38 @@ async function applyAction(env, ctx, id, act, now = Date.now()) {
       if (act.type === 'ready' && fam.target && JSON.stringify(fam.target.ready) !== JSON.stringify(before.target?.ready)) {
         ctx?.waitUntil?.(notifyReady(env, id, fam, act).catch((err) => console.error('ready push', err)));
       }
-      return { id, fam, updated: t, changed: JSON.stringify(fam.done) !== JSON.stringify(before.done) || JSON.stringify(fam.target) !== JSON.stringify(before.target) || fam.car !== before.car };
+      const same = (k) => JSON.stringify(fam[k]) === JSON.stringify(before[k]);
+      return { id, fam, updated: t, changed: !same('done') || !same('target') || !same('car') };
     }
   }
   throw fail(409, 'busy, try again');
 }
 
 // ---------- OwnTracks: background location from the free OwnTracks app (worker/owntracks.js)
-// POST /api/ot/<token>: always answers 200 [] (OwnTracks keeps retrying anything else), so a revoked token is quiet.
+// POST /api/ot/<token>: always answers 200 [] (OwnTracks keeps retrying anything else, also after an error of ours),
+// so a revoked token is quiet and a failure never makes a phone resend the same batch forever.
 async function ownTracks(request, env, ctx, token) {
   if (request.method !== 'POST' || !okToken(token)) return json([]);
+  if (Number(request.headers.get('content-length') || 0) > 400000) return json([]); // before reading the body
+  try { await otReceive(request, env, ctx, token); } catch (err) { console.error('ot', err?.message || err); }
+  return json([]);
+}
+async function otReceive(request, env, ctx, token) {
   await schema(env);
-  const row = await env.DB.prepare('SELECT token, family, device, tracker FROM ot WHERE token = ?').bind(token).first();
-  if (!row) return json([]);
+  const row = await env.DB.prepare('SELECT token, family, device, tracker, last FROM ot WHERE token = ?').bind(token).first();
+  if (!row) return;
   const text = await request.text();
-  if (text.length > 400000) return json([]);
+  if (text.length > 400000) return;
   const now = Date.now();
   const fixes = otFixes(text, now);
-  if (!fixes.length) return json([]);
-  let tr = freshTracker(JSON.parse(row.tracker || 'null'), fixes[0].t);
+  if (!fixes.length) return;
+  const tr = freshTracker(JSON.parse(row.tracker || 'null'), fixes[0].t);
   const famRow = await env.DB.prepare('SELECT data FROM families WHERE id = ?').bind(row.family).first();
-  if (!famRow) return json([]);
+  if (!famRow) return;
   let fam = JSON.parse(famRow.data);
   const live = await getLive(ctx).catch(() => null);
   let lastGood = null, rejected = 0;
+  const notes = [];
   for (const fix of fixes) {
     const { events, T, r } = step(tr, fix, fam, row.device, live);
     if (!r.ok) { rejected++; continue; }
@@ -195,24 +203,32 @@ async function ownTracks(request, env, ctx, token) {
       for (const { act, note } of actionsFor(e, T, fam, row.device)) {
         let changed = true;
         if (act) {
-          try { const res = await applyAction(env, ctx, row.family, act, now); fam = res.fam; changed = res.changed; } catch (err) { console.error('ot action', act.type, err.message); continue; }
+          try { const res = await applyAction(env, ctx, row.family, act, now); fam = res.fam; changed = res.changed; }
+          catch (err) { console.error('ot action', act.type, err.message); delete tr.emitted[e.key]; continue; } // may fire again later
         }
-        if (note && changed) ctx.waitUntil(notifyDevice(env, row.device, note).catch((err) => console.error('ot push', err)));
+        if (note && changed) notes.push(note);
       }
     }
   }
-  // the partner dot on the other phone: our latest good position
-  if (lastGood && okDevice(row.device) && now - lastGood.t < 10 * 60e3) {
+  // the partner dot on the other phone: our latest good position (at most once a minute or after 25 m)
+  const prev = fam.positions?.[row.device];
+  if (lastGood && okDevice(row.device) && now - lastGood.t < 10 * 60e3
+    && (!prev || lastGood.t - prev.t > 60e3 || Math.hypot((lastGood.lat - prev.lat) * 111194, (lastGood.lon - prev.lon) * 70500) > 25)) {
     try { await applyAction(env, ctx, row.family, { type: 'pos', device: row.device, lat: lastGood.lat, lon: lastGood.lon, at: lastGood.t }, now); } catch { /* ignore */ }
   }
   const info = { t: lastGood?.t || null, acc: lastGood ? Math.round(lastGood.acc) : null, batt: lastGood?.batt ?? null, n: fixes.length, rejected };
-  await env.DB.prepare('UPDATE ot SET tracker = ?, info = ?, last = ? WHERE token = ?').bind(JSON.stringify(tr), JSON.stringify(info), now, token).run();
-  return json([]);
+  // versioned on `last`: a parallel request for the same phone that saved first wins; we then send no pushes
+  // (its own run already decided them), so a burst of retries never doubles a notification
+  const res = await env.DB.prepare('UPDATE ot SET tracker = ?, info = ?, last = ? WHERE token = ? AND last = ?').bind(JSON.stringify(tr), JSON.stringify(info), Math.max(now, (row.last || 0) + 1), token, row.last).run();
+  if (res.meta.changes !== 1) return;
+  for (const note of notes) ctx.waitUntil(notifyDevice(env, row.family, row.device, note).catch((err) => console.error('ot push', err)));
 }
-async function notifyDevice(env, device, note) {
+async function notifyDevice(env, family, device, note) {
   if (!env.VAPID_PRIVATE_JWK) return;
-  const r = await env.DB.prepare('SELECT sub FROM subs WHERE device = ?').bind(device).first();
+  const r = await env.DB.prepare('SELECT sub, prefs FROM subs WHERE device = ? AND family = ?').bind(device, family).first();
   if (!r) return;
+  let prefs = {}; try { prefs = JSON.parse(r.prefs) || {}; } catch { /* default */ }
+  if (prefs.auto === false) return; // "automatisch herkend" notifications switched off
   const status = await pushTo(env, r.sub, note);
   if (status === 404 || status === 410) await env.DB.prepare('DELETE FROM subs WHERE device = ?').bind(device).run();
 }
@@ -313,7 +329,7 @@ async function push(request, env) {
   }
   if (request.method !== 'POST') throw fail(405, 'method not allowed');
   if (!okFamily(body.family)) throw fail(400, 'bad family');
-  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false, chat: body.prefs?.chat !== false };
+  const prefs = { fav: body.prefs?.fav !== false, best: body.prefs?.best !== false, food: body.prefs?.food !== false, down: body.prefs?.down !== false, chat: body.prefs?.chat !== false, auto: body.prefs?.auto !== false };
   const s = body.sub;
   if (s) {
     if (!okEndpoint(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) throw fail(400, 'bad subscription');

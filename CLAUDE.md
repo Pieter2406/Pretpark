@@ -253,3 +253,10 @@ No accounts; knowing the family id is the access.
   (worker/index.js) is the shared optimistic-concurrency write used by /api/family too. The latest good fix also
   updates `positions[device]` (partner dot). D1 table `ot` (token, family, device, tracker JSON, info, last, created);
   the cron deletes links after a day without positions. Tests: tests/owntracks.test.js, worker.test.js (OwnTracks).
+- Review fixes (OwnTracks): `/api/ot` never answers anything but `200 []` (all work in `otReceive` inside try/catch,
+  content-length > 400 kB refused before reading); only the newest 300 fixes per request; the tracker row is versioned
+  on `last` (a parallel request that saved first wins, the loser sends no pushes); a failed action clears its
+  `emitted` key so it can fire again; pushes only when the action really changed done/target/car (JSON compare), only
+  to a subscription of the same family, and not when the push pref `auto` is off (Gezin › Meldingen › 🤖); in a split
+  an unknown person on the phone acts for nobody; the partner dot is written at most once a minute or after 25 m; the
+  setup view's 5-s poll only replaces the status line.

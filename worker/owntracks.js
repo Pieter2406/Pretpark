@@ -14,7 +14,7 @@ export const newToken = () => [...crypto.getRandomValues(new Uint8Array(24))].ma
 // array (its offline queue); other message types (transition, status, waypoints, lwt…) and junk are ignored.
 export function otFixes(text, now) {
   let data; try { data = JSON.parse(text); } catch { return []; }
-  const list = (Array.isArray(data) ? data : [data]).slice(0, 500);
+  const list = Array.isArray(data) ? data : [data];
   const out = [];
   for (const m of list) {
     if (!m || m._type !== 'location') continue;
@@ -26,7 +26,8 @@ export function otFixes(text, now) {
     const vel = Number(m.vel);
     out.push({ lat, lon, acc, t: Math.min(t, now), speed: Number.isFinite(vel) && vel >= 0 ? vel / 3.6 : null, batt: Number.isFinite(Number(m.batt)) ? Number(m.batt) : null });
   }
-  return out.sort((a, b) => a.t - b.t);
+  // the newest 300 at most (OwnTracks' offline queue can be long; older fixes matter least)
+  return out.sort((a, b) => a.t - b.t).slice(-300);
 }
 
 // point in the park outline (park.json: metres east/south of origin, like route.js)
@@ -48,7 +49,7 @@ export function targetFor(fam, device, live) {
   const person = fam.me?.[device];
   if (plan.type === 'split' && !person) return null;
   let i = plan.parts.findIndex((p) => p.group?.includes(person));
-  if (i < 0) i = 0;
+  if (i < 0) { if (plan.type === 'split') return null; i = 0; } // never act for the other half
   const pt = plan.parts[i];
   if (!pt) return null;
   const q = t.q?.[i] || (!t.q && t.queued ? { t: t.queued } : null);
