@@ -470,15 +470,28 @@ async function photos(request, env, email, fam, id, what) {
     await env.DB.prepare('UPDATE photos SET meta = ? WHERE family = ? AND id = ?').bind(JSON.stringify(meta), fam, id).run();
     return json({ ok: true, meta });
   }
-  if (request.method !== 'POST' || !id) throw fail(405, 'method not allowed');
+  if ((request.method !== 'POST' && request.method !== 'PUT') || !id) throw fail(405, 'method not allowed');
   // multipart: full (original file), thumb (jpeg), meta (json). With meta.thumbOnly the phone sends the small version
   // first (seconds, even on a weak signal), so the photo is in the shared album at once; the original follows later.
   const len = Number(request.headers.get('content-length') || 0);
   if (len > MAX_PHOTO + 2e6) throw fail(413, 'photo too big');
   // The client drops a queued upload only on 'bad photo' (400) or 'photo too big' (413): anything else is retried.
-  const form = await request.formData();
-  const full = form.get('full'), thumb = form.get('thumb');
-  let m = {}; try { m = JSON.parse(form.get('meta') || '{}'); } catch { /* defaults */ }
+  // PUT = the original as raw bytes (Content-Type = its type, details in x-pretpark-meta, its size in
+  // x-pretpark-size): iOS Safari cut big multipart bodies short ("No initial boundary string"); a raw body is checked
+  // against the size the phone says, and a short one is answered 409 'truncated' (the phone simply tries again).
+  let full, thumb, m = {};
+  if (request.method === 'PUT') {
+    const want = Number(request.headers.get('x-pretpark-size'));
+    const buf = await request.arrayBuffer();
+    if (!Number.isFinite(want) || want <= 0 || buf.byteLength !== want) throw fail(409, `truncated ${buf.byteLength}/${want}`);
+    full = new File([buf], 'photo', { type: (request.headers.get('content-type') || '').split(';')[0] });
+    try { m = JSON.parse(decodeURIComponent(request.headers.get('x-pretpark-meta') || '{}')); } catch { /* defaults */ }
+  } else {
+    let form;
+    try { form = await request.formData(); } catch (e) { throw fail(409, `truncated: ${e.message}`.slice(0, 120)); } // cut-off body: try again
+    full = form.get('full'); thumb = form.get('thumb');
+    try { m = JSON.parse(form.get('meta') || '{}'); } catch { /* defaults */ }
+  }
   const prev = await env.DB.prepare('SELECT family, meta FROM photos WHERE id = ?').bind(id).first();
   if (prev && prev.family !== fam) throw fail(409, 'id taken'); // never replace another family's photo
   if (await env.DB.prepare('SELECT 1 FROM photo_gone WHERE id = ? AND family = ?').bind(id, fam).first()) throw fail(410, 'deleted');

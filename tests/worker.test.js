@@ -456,3 +456,19 @@ test('photos: PATCH only changes the fields sent (star on one phone, caption on 
   const p = (await call('GET', `/api/photos/${f.id}`)).data[0];
   assert.equal(p.caption, 'Wauw'); assert.equal(p.star, true);
 });
+
+test('photos: the original as raw bytes (PUT) with a size check; a cut-off body is 409 "truncated", not a crash', async () => {
+  const f = await newFam();
+  const put = (bytes, size, meta = {}) => worker.fetch(new Request(`http://localhost/api/photos/${f.id}/rawput0001`, {
+    method: 'PUT', body: bytes, headers: { 'content-type': 'image/jpeg', 'x-pretpark-size': String(size), 'x-pretpark-meta': encodeURIComponent(JSON.stringify(meta)) } }), env, ctx);
+  const short = await put(Buffer.from('half'), 8);
+  assert.equal(short.status, 409); assert.match((await short.json()).error, /truncated/);
+  const ok = await put(Buffer.from('fulljpeg'), 8, { t: Date.now() - 60e3, near: 'Kondaa', caption: 'Hoera' });
+  assert.equal(ok.status, 201);
+  const d = await ok.json(); assert.equal(d.size, 8); assert.equal(d.near, 'Kondaa'); assert.equal(d.type, 'image/jpeg');
+  const g = await worker.fetch(new Request(`http://localhost/api/photos/${f.id}/rawput0001/full`), env, ctx);
+  assert.equal(await g.text(), 'fulljpeg');
+  // a multipart body that can't be parsed: 409 too (retried), never 500
+  const bad = await worker.fetch(new Request(`http://localhost/api/photos/${f.id}/rawput0002`, { method: 'POST', body: '--x\r\ncut', headers: { 'content-type': 'multipart/form-data; boundary=zzz' } }), env, ctx);
+  assert.equal(bad.status, 409);
+});

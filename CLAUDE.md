@@ -392,3 +392,7 @@ No accounts; knowing the family id is the access.
   is read into memory right away (`solid()` in app.js: arrayBuffer → new File) before it is stored, and again before
   it is sent; an unreadable one is reported (`read-file`) and skipped, a 5xx on one photo no longer stops the others.
   500 responses carry `detail` (error name + message) so the phone's diagnostics show the reason. R2 gets the File itself.
+- Still cut off after that (so not the stored file): the original now goes as raw bytes, `PUT /api/photos/<fam>/<id>`
+  with Content-Type, `x-pretpark-size` and `x-pretpark-meta` (URI-encoded JSON); the server compares the received length
+  and answers 409 "truncated" (the phone retries, the next photos go on). A multipart body that can't be parsed is 409
+  too (never 500). The small version still goes multipart first (`thumbOnly`).

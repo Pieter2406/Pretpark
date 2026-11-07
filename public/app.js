@@ -2008,6 +2008,18 @@ async function addPhotos(files, fromCamera, caption = '') {
 let uploading = false, uploadAgain = false;
 const takeAlbumItem = (p) => { S.album = [...S.album.filter((x) => x.id !== p.id), p].sort((a, b) => a.t - b.t); cached.save('album', S.album); };
 const goneIds = new Set(); // deleted on purpose on this phone: an upload in flight must not bring them back
+async function putPhoto(u, file, ms) {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'PUT', body: file, redirect: 'manual', signal: timeoutSignal(ms),
+      headers: { 'content-type': file.type || 'image/jpeg', 'x-pretpark-size': String(file.size), 'x-pretpark-meta': encodeURIComponent(JSON.stringify(u.meta)) } });
+    if (!r.ok) diag('up-http', `${u.id} full PUT ${file.size} B: ${r.status} ${r.type} ${(await r.clone().text().catch(() => '')).slice(0, 200)}`);
+    return r;
+  } catch (e) {
+    diag('up-fail', `${u.id} full PUT ${file.size} B after ${Math.round((Date.now() - t0) / 1000)} s: ${e?.name} ${e?.message} · online=${navigator.onLine}`);
+    return null;
+  }
+}
 async function postPhoto(u, fd, ms) {
   const t0 = Date.now();
   try {
@@ -2086,11 +2098,8 @@ async function processUploads() {
       // read the original into memory first: a stored file can come out empty on iOS (then: try again later)
       const body = await solid(k.file, k.file.name || `${u.id}.jpg`);
       if (!body) continue;
-      const fd = new FormData();
-      fd.append('full', body, body.name);
-      const tb = k.thumb && (await solid(k.thumb, 'thumb.jpg')); if (tb) fd.append('thumb', tb, 'thumb.jpg');
-      fd.append('meta', JSON.stringify(u.meta));
-      const res = await postPhoto(u, fd, Math.min(15 * 60e3, 60e3 + size / 30));
+      // the original as raw bytes (PUT), not multipart: iOS cut big multipart bodies short; the server checks the size
+      const res = await putPhoto(u, body, Math.min(15 * 60e3, 60e3 + size / 30));
       if (fail(res)) break;
       if (goneIds.has(u.id)) continue; // deleted while it was uploading: the delete removes it from the server
       if (res.ok) {
@@ -2107,7 +2116,7 @@ async function processUploads() {
         if (err === 'bad photo' || err === 'photo too big' || err === 'deleted') {
           await dropFromQueue(u, k, err);
           if (err !== 'deleted') toast('Eén foto kon niet online, ze blijft wel op deze gsm');
-        } else if (res.status >= 500) continue; // this one failed (e.g. a cut-off body): the next photos still go
+        } else if (res.status >= 500 || res.status === 409) continue; // this one failed (a cut-off body…): the next still go
         else break;
       }
     }
