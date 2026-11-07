@@ -404,3 +404,10 @@ No accounts; knowing the family id is the access.
   or in a split (with "wie ben jij") only our half switches ride (key `<ids>:hand`, score 0; meeting point = part 0's
   ride). `queueAt(plan)` sets the target if needed, then sends `queue` with the posted wait (known only); a second tap
   keeps the first start.
+
+## Updates reach every phone (7 Nov)
+- A home-screen app on iPhone never reloads by itself and iOS rarely checks for a new service worker, so Pieter's phone
+  kept running the old photo upload for hours. Now app.js calls `reg.update()` on every return to the front (≤ 1/min)
+  and every 10 min; when the new worker is activated it reloads at once if `calmMoment()` (no sheet/guide/chat/pocket,
+  nothing being typed, no upload/import running), else on the next return to the front. The very first install
+  never reloads. Tested by changing VERSION under a live page (Chromium + WebKit).

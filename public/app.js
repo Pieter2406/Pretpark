@@ -42,6 +42,9 @@ const S = {
 // ---------- people
 const people = () => S.fam?.people || [];
 const meId = () => S.fam?.me?.[device] || null;
+// nothing in progress on screen: no dialog/sheet/guide/pocket open, no text being typed, no upload or import running
+const calmMoment = () => !document.hidden && !S.guide && !S.pocket && !S.chatOpen && $('#sheet')?.hidden !== false && !S.ticketBusy && !uploading
+  && !document.activeElement?.matches?.('input, textarea, select');
 // ---------- diagnostics: problems on this phone (photo uploads, storage, crashes) go to the server (/api/diag), so a
 // failure on someone's phone can be looked at from afar. Small, batched, at most one send per 10 s, same kind ≤ 1/min.
 const diagQ = [], diagSeen = new Map();
@@ -2845,10 +2848,24 @@ async function afterFamily() {
       else if (u.searchParams.get('chat')) openChat();
       else { pollFamily(); loadLive(); }
     });
+    // Updates: an iPhone home-screen app is never reloaded by itself and iOS rarely looks for a new service worker,
+    // so a phone could run old code all day (7 Nov: Pieter's phone kept the broken photo upload). Look for an update
+    // at every return and every 10 min; once the new version is installed, load it at a safe moment: when the app
+    // comes back to the front (nothing half-typed), or right away when nothing is open.
+    const hadSw = !!navigator.serviceWorker.controller; // the very first install is no "update" (no reload then)
     navigator.serviceWorker.register('/sw.js').then((reg) => {
+      const ready = () => { if (!hadSw) return; S.newVersion = true; renderBanners(); if (calmMoment()) location.reload(); };
       reg.addEventListener('updatefound', () => {
         const w = reg.installing;
-        w?.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) { S.newVersion = true; renderBanners(); } });
+        w?.addEventListener('statechange', () => { if (w.state === 'activated' && S.swAt) ready(); else if (w.state === 'installed' && navigator.serviceWorker.controller) { S.newVersion = true; renderBanners(); } });
+      });
+      S.swAt = Date.now();
+      const check = () => { if (Date.now() - (S.swCheck || 0) > 60e3) { S.swCheck = Date.now(); reg.update().catch(() => {}); } };
+      setInterval(check, 10 * 60e3);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { S.hiddenAt = Date.now(); return; }
+        if (S.newVersion && Date.now() - (S.hiddenAt || 0) > 2e3) { location.reload(); return; } // back from elsewhere
+        check();
       });
     }).catch(() => {});
   }
