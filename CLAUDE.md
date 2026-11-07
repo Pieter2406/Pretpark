@@ -165,3 +165,9 @@ No accounts; knowing the family id is the access.
   `RATE_MUL` in logic.js multiplies that person's enjoyment of the ride (😍 ×1.7 partly undoes the done decay).
 - "Ons dagverslag" shows toppers (ratings), the quiz champion and the queue minutes / best guesser (`storyFun`).
 - The cron sends no "👉 Nu ideaal" while a queue of the current target is younger than 90 min.
+- Split + queues: "Gedaan" while the other half is still in its queue (not boarded, not ready) sends `ready` instead
+  and keeps the plan ("✓ Iedereen terug: Gedaan" ends it). `done` carries `part`: only the sender's own unboarded queue
+  gets an estimated wait, only with a known posted wait and when not > max(2w, w+30). A second `queue` for the same
+  part keeps the first start and boarding. Queue/rate in a split needs "wie ben jij" (meId) first.
+- Guess drafts are sent through one promise chain (`flushGuesses`), awaited before `board`/`done`; the winner uses the
+  real wait rounded to 0.1 min everywhere (`realWait`), like the server.

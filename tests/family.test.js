@@ -261,3 +261,30 @@ test('quiz: points per person, a question counts once; rate: 1–3 per person pe
   assert.throws(() => apply(f, { type: 'rate', id: 'nope', person: 'p1', v: 2 }, NOW), /bad rate/);
   assert.throws(() => apply(f, { type: 'rate', id: k, person: 'p8', v: 2 }, NOW), /bad rate/);
 });
+
+test('review fixes: a second "queue" keeps the first start and the boarding; done estimates only its own part', () => {
+  let f = withTarget(split, NOW - 3600e3);
+  f = apply(f, { type: 'queue', part: 0, wait: 20 }, NOW - 30 * 60e3);
+  f = apply(f, { type: 'board', part: 0 }, NOW - 5 * 60e3);
+  f = apply(f, { type: 'queue', part: 0, wait: 25 }, NOW - 25 * 60e3); // late replay from the other phone
+  assert.equal(f.target.q[0].t, NOW - 30 * 60e3);
+  assert.equal(f.target.q[0].b, NOW - 5 * 60e3);
+  assert.equal(f.target.q[0].w, 20);
+  f = apply(f, { type: 'queue', part: 1, wait: 10 }, NOW - 20 * 60e3);
+  // part 0's phone says done: part 1 (still in line) gets no estimate, part 0 was measured at board
+  const a = apply(f, { type: 'done', ids: [split.parts[0].id], part: 0 }, NOW);
+  assert.equal(a.waits.length, 1);
+  // part 1's phone says done: its own estimate is added
+  const b = apply(f, { type: 'done', ids: [split.parts[1].id], part: 1 }, NOW);
+  assert.equal(b.waits.length, 2);
+  // a "Gedaan" forgotten until much later is no measurement
+  let g = withTarget(together, NOW - 4 * 3600e3);
+  g = apply(g, { type: 'queue', wait: 10 }, NOW - 3 * 3600e3);
+  g = apply(g, { type: 'done', ids: [together.parts[0].id], part: 0 }, NOW);
+  assert.equal(g.waits, undefined);
+  // without a posted wait: no estimate either
+  let h = withTarget(together, NOW - 3600e3);
+  h = apply(h, { type: 'queue' }, NOW - 20 * 60e3);
+  h = apply(h, { type: 'done', ids: [together.parts[0].id] }, NOW);
+  assert.equal(h.waits, undefined);
+});

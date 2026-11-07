@@ -340,7 +340,8 @@ export function decideNotifications({ fam, deviceId, live, now, prefs, memo }) {
   // 5. a clearly better next step
   if (!notes.length && prefs.best !== false && !quiet && here && since('best') > 15 * 60e3) {
     const targetAge = target?.setAt ? now - target.setAt : Infinity;
-    const inQueue = Object.values(target?.q || {}).some((q) => now - q.t < 90 * 60e3); // standing in line: no "better idea"
+    // standing in line (also old clients' target.queued): no "better idea"
+    const inQueue = Object.values(target?.q || {}).some((q) => now - q.t < 90 * 60e3) || (!target?.q && now - (target?.queued || 0) < 90 * 60e3);
     if (targetAge > 30 * 60e3 && !inQueue) {
       const best = plans(ctx)[0];
       if (best && best.key !== memo.bestKey && best.parts[0].wait <= 15) {

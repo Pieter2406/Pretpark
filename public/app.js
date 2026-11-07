@@ -1012,8 +1012,10 @@ function queueLeft(Q) {
 }
 const groupOf = (Q) => (Q ? Q.pt.group : people().map((p) => p.id)).map(person).filter(Boolean);
 const quizPts = (pid) => num(S.fam?.quiz?.[pid]?.pts);
+const hashOf = (s) => { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0; return h; };
 const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
 // best guess of the real wait (same rule as family.js addWait)
+const realWait = (q) => Math.round(((q.b - q.t) / 60e3) * 10) / 10; // as stored by family.js addWait
 function guessWinner(g, m) {
   let win = null;
   for (const [pid, v] of Object.entries(g || {})) if (!win || Math.abs(v - m) < Math.abs(win[1] - m)) win = [pid, v];
@@ -1028,7 +1030,9 @@ function nextAfter(a) {
   try {
     const from = S.park.fromHere(a);
     const ps = plans({ ...planCtx(), done: { ...(S.fam.done || {}), [a.id]: num(S.fam.done?.[a.id]) + 1 }, walk: (x) => from.metres(x) });
-    const pt = ps[0] && (ps[0].parts.find((x) => x.group.includes(meId()) && !x.rest) || ps[0].parts.find((x) => !x.rest));
+    // the first suggestion that isn't this same ride again
+    const pick = (pl) => pl.parts.find((x) => x.group.includes(meId()) && !x.rest) || pl.parts.find((x) => !x.rest);
+    const pt = ps.map(pick).find((x) => x && x.id !== a.id);
     if (pt && byId[pt.id]) v = { a: byId[pt.id], wait: status(S.live, pt.id).wait ?? pt.wait };
   } catch { v = null; }
   nextAfter.k = k; nextAfter.v = v;
@@ -1046,14 +1050,18 @@ function queueCard() {
   const split = t.plan.type === 'split';
   const meet = split ? byId[t.plan.meet] : null;
   const tail = `${meet ? `<div class="meet">📍 Daarna afspreken aan de uitgang van <b>${esc(meet.name)}</b></div>` : ''}
-    <div class="row2"><button data-go="done">✓ Gedaan</button><button data-go="untarget">✕ Iets anders</button></div>`;
+    <div class="row2"><button data-go="done">✓ Gedaan</button><button data-go="untarget">✕ Iets anders</button></div>
+    ${split && !t.ready?.[Q.i] ? '<div class="row1"><button data-go="ready">✅ Wij zijn klaar</button></div>' : ''}`;
   if (q.b) {
     const m = Math.max(1, Math.round((q.b - q.t) / 60e3));
-    const win = guessWinner(q.g, m);
+    const win = guessWinner(q.g, realWait(q));
+    const mineReady = split && t.ready?.[Q.i];
+    const others = split ? t.plan.parts[1 - Q.i] : null;
     return `<section class="qcard on" aria-label="Aan de beurt"><p class="kicker">🎢 Aan de beurt</p>
       <h2>${icon(a)} ${esc(a.name)}: veel plezier!</h2>
       <p>Jullie stonden <b>${m} min</b> in de rij${q.w != null ? ` (aangekondigd: ${num(q.w)} min)` : ''}.${win ? `<br>🏆 <b>${esc(person(win[0])?.name || '')}</b> zat er het dichtst bij met ${num(win[1])} min!` : ''}</p>
-      <button class="primary big" data-go="done">✓ Gedaan: we zijn eraf</button>${tail.replace(/<div class="row2">.*<\/div>/s, '')}</section>`;
+      ${mineReady ? `<p class="small">✅ De anderen weten dat jullie klaar zijn. Tik op Gedaan als jullie weer samen zijn.</p><button class="primary big" data-go="done">✓ Iedereen terug: Gedaan</button>`
+        : `<button class="primary big" data-go="done">✓ ${split && others && !others.rest ? 'We zijn eraf' : 'Gedaan: we zijn eraf'}</button>`}${tail.replace(/<div class="row2">.*<\/div>/s, '')}</section>`;
   }
   const L = queueLeft(Q);
   const now = status(S.live, a.id).wait;
@@ -1107,7 +1115,7 @@ function quizSheet(answered, keepPlace = !!answered) {
   const seen = new Set([...(S.fam.quiz?.[pid]?.ids || []), ...(S.quizSeen?.[pid] || [])]); // + answers still on their way
   const all = quizList();
   // this ride's questions first, then the others in a fixed shuffled order (the same on both phones)
-  const order = [...all.filter((x) => x.ride === a?.name), ...all.filter((x) => x.ride !== a?.name).sort((x, y) => slug(x.id + 'w').localeCompare(slug(y.id + 'w')) * (x.id.length % 2 ? 1 : -1))];
+  const order = [...all.filter((x) => x.ride === a?.name), ...all.filter((x) => x.ride !== a?.name).sort((x, y) => hashOf(x.id) - hashOf(y.id) || (x.id < y.id ? -1 : 1))];
   const q = answered || order.find((x) => !seen.has(x.id));
   const facts = (a && FACTS[a.name]?.facts) || [];
   const other = Object.entries(FACTS).filter(([n, f]) => n !== a?.name && f.facts?.length);
@@ -1149,11 +1157,14 @@ function guessTap(pid, d) {
   S.gdraft[pid] = v; buzz();
   const el = $('#g-' + pid); if (el) el.textContent = v;
   clearTimeout(guessTap.t);
-  guessTap.t = setTimeout(async () => {
-    const draft = S.gdraft; S.gdraft = null;
-    for (const [p, m] of Object.entries(draft || {})) await act({ type: 'guess', part: Q.i, person: p, min: m }, true);
-    if (S.tab === 'now') renderNow();
-  }, 900);
+  guessTap.t = setTimeout(() => { flushGuesses().then(() => { if (S.tab === 'now') renderNow(); }); }, 900);
+}
+// send the guesses still on this phone (also right before "aan de beurt"), one chain so nothing overtakes them
+function flushGuesses() {
+  clearTimeout(guessTap.t);
+  const Q = myQueue(), draft = S.gdraft; S.gdraft = null;
+  if (Q && draft) S.guessSend = (S.guessSend || Promise.resolve()).then(async () => { for (const [p, m] of Object.entries(draft)) await act({ type: 'guess', part: Q.i, person: p, min: m }, true); });
+  return S.guessSend || Promise.resolve();
 }
 // after "Gedaan": how was it? (per person who rode on this phone's side) + the photo moment
 function rateSheet(id, who) {
@@ -1720,7 +1731,9 @@ document.addEventListener('click', async (e) => {
     S.quizSeen = S.quizSeen || {}; (S.quizSeen[S.quizWho] ||= []).push(q.id);
     buzz(ok ? [20, 40, 20] : 60);
     quizSheet({ ...q, picked });
-    act({ type: 'quiz', person: S.quizWho, q: q.id, ok }, true).then(() => { $('#sheet').querySelectorAll('[data-quizwho] b').forEach((b) => { b.textContent = quizPts(b.parentElement.dataset.quizwho); }); });
+    const who = S.quizWho;
+    act({ type: 'quiz', person: who, q: q.id, ok }, true).then((sent) => {
+      if (!sent) S.quizSeen[who] = S.quizSeen[who].filter((x) => x !== q.id); $('#sheet').querySelectorAll('[data-quizwho] b').forEach((b) => { b.textContent = quizPts(b.parentElement.dataset.quizwho); }); });
     return;
   }
   if (d.guess) { const [pid, n] = d.guess.split(':'); guessTap(pid, +n); return; }
@@ -1752,25 +1765,38 @@ document.addEventListener('click', async (e) => {
       const mine = plan ? myPart(plan) : null;
       const rated = mine && !mine.rest ? mine.id : ids[0];
       const who = mine && !mine.rest ? mine.ride || [] : plan ? [] : people().filter((p) => byId[rated] && canRide(p, byId[rated])).map((p) => p.id);
+      const unknown = plan?.type === 'split' && !meId(); // don't rate or report for the wrong half
       if (S.guide) closeGuide();
-      S.gdraft = null;
-      await act({ type: 'done', ids }); celebrate(); scrollTo(0, 0);
-      if (who.length && byId[rated]?.cat) rateSheet(rated, who); else photoMoment(ids);
+      await flushGuesses();
+      const t = S.fam.target, i = plan ? myIdx(plan) : 0;
+      const other = plan?.type === 'split' ? plan.parts[1 - i] : null;
+      if (!unknown && other && !other.rest && !t.ready?.[i] && !t.ready?.[1 - i] && t.q?.[1 - i] && !t.q[1 - i].b) {
+        // the other half is still in their queue: tell them we're done, keep the plan until everyone is back
+        if (!(await act({ type: 'ready', part: i, device }))) break;
+        toast('✅ De anderen krijgen een seintje. Tik nog eens op Gedaan als jullie weer samen zijn.', null, 6000);
+        if (who.length && byId[rated]?.cat) rateSheet(rated, who);
+        break;
+      }
+      if (!(await act({ type: 'done', ids, ...(plan && !unknown ? { part: i } : {}) }))) break;
+      celebrate(); scrollTo(0, 0);
+      if (!unknown && who.length && byId[rated]?.cat) rateSheet(rated, who); else photoMoment(ids);
       break;
     }
     case 'queue': {
       const plan = S.fam.target?.plan; if (!plan) break;
+      if (plan.type === 'split' && !meId()) { toast('Kies eerst wie je bent, dan weet ik welke rij van jullie is'); onboard('who'); break; }
       const i = myIdx(plan), pt = plan.parts[i];
-      await act({ type: 'queue', part: i, wait: pt?.id ? status(S.live, pt.id).wait ?? pt.wait : null });
+      if (!(await act({ type: 'queue', part: i, wait: pt?.id ? status(S.live, pt.id).wait ?? pt.wait : null }))) break;
       if (S.guide) closeGuide(); scrollTo(0, 0);
       toast('⏳ Rij-modus aan: spelletjes en aftellen op Nu'); break;
     }
     case 'board': {
       const Q = myQueue(); if (!Q) break;
-      if (S.gdraft) { clearTimeout(guessTap.t); for (const [p, m] of Object.entries(S.gdraft)) await act({ type: 'guess', part: Q.i, person: p, min: m }, true); S.gdraft = null; }
-      await act({ type: 'board', part: Q.i }); buzz([40, 40, 80]);
+      await flushGuesses();
+      if (!(await act({ type: 'board', part: Q.i }))) break;
+      buzz([40, 40, 80]);
       const q = S.fam.target?.q?.[Q.i];
-      const win = q?.b && guessWinner(q.g, (q.b - q.t) / 60e3);
+      const win = q?.b && guessWinner(q.g, realWait(q));
       toast(win ? `🏆 ${person(win[0])?.name || ''} raadde het best!` : '🎢 Veel plezier!'); break;
     }
     case 'signal': signalOthers(); break;

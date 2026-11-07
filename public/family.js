@@ -119,12 +119,15 @@ export function apply(fam, act, now) {
     }
     case 'done': {
       const ids = (Array.isArray(act.ids) ? act.ids : []).filter(okId).slice(0, 3);
-      // a queue nobody tapped "aan de beurt" for: estimate the wait as queue → done minus the ride and getting off
+      // a queue nobody tapped "aan de beurt" for: estimate the wait as queue → done minus the ride and getting off.
+      // Only the sender's own part (the other half may still be in line), only with a known posted wait, and not
+      // when "Gedaan" came much later (forgotten until after lunch).
       if (target && !beforeTarget()) {
         for (const [part, q] of Object.entries(target.q || {})) {
-          if (q.b) continue;
+          if (q.b || q.w == null || (act.part != null && String(act.part) !== part)) continue;
           const a = byId[target.plan?.parts?.[part]?.id];
-          addWait(f, target, part, (t - q.t) / 60e3 - (a?.ride || 3) - 2, t);
+          const m = (t - q.t) / 60e3 - (a?.ride || 3) - 2;
+          if (m <= Math.max(2 * q.w, q.w + 30)) addWait(f, target, part, m, t);
         }
       }
       for (const id of ids) f.done[id] = (f.done[id] || 0) + 1;
@@ -145,9 +148,11 @@ export function apply(fam, act, now) {
     // "we're in the queue": per part of the plan (a split has two queues), with the posted wait at that moment
     case 'queue': {
       if (!target || beforeTarget()) break;
-      const part = partOf(act, target);
+      const part = partOf(act, target), old = target.q?.[part];
       target.queued = target.queued || t;
-      target.q = { ...(target.q || {}), [part]: { t, w: num(act.wait, 0, 300, null), g: target.q?.[part]?.g || {} } };
+      // the second phone (or a late replay) tapping it again keeps the first start and "aan de beurt"
+      if (old) { if (old.w == null) old.w = num(act.wait, 0, 300, null); break; }
+      target.q = { ...(target.q || {}), [part]: { t, w: num(act.wait, 0, 300, null), g: {} } };
       break;
     }
     // "it's our turn": the real wait is known now (for the guessing game and the planner's wait factor)

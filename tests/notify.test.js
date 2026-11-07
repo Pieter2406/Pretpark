@@ -73,4 +73,6 @@ test('"Nu ideaal": not while the family stands in a queue', () => {
   assert.ok(decide(fam, live, prefs).notes.some((n) => n.tag === 'best'), 'old target, not queued: suggest');
   const queued = { ...fam, target: { ...fam.target, q: { 0: { t: NOW - 40 * 60e3, w: 45, g: {} } } } };
   assert.ok(!decide(queued, live, prefs).notes.some((n) => n.tag === 'best'), 'in the queue: quiet');
+  const oldClient = { ...fam, target: { ...fam.target, queued: NOW - 40 * 60e3 } };
+  assert.ok(!decide(oldClient, live, prefs).notes.some((n) => n.tag === 'best'), 'old client in the queue: quiet');
 });
