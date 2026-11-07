@@ -260,3 +260,7 @@ No accounts; knowing the family id is the access.
   to a subscription of the same family, and not when the push pref `auto` is off (Gezin › Meldingen › 🤖); in a split
   an unknown person on the phone acts for nobody; the partner dot is written at most once a minute or after 25 m; the
   setup view's 5-s poll only replaces the status line.
+- OwnTracks ≥ iOS 26.2.2 / Android 2.6.0 block `owntracks:///config` links by default ("URI or file configuration not
+  allowed"); the user must first enable `allowConfigurationByURIAndConfigFile` in OwnTracks › ⓘ › Instellingen (a link
+  can't change it). So the view shows the manual way first (copy the link; Modus HTTP, URL; choose **Actie** = Move in
+  the Dutch app) and the one-tap button second, with that hint.

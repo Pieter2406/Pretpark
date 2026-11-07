@@ -1466,7 +1466,7 @@ function otState() {
     : !st ? '<div class="otstate">⏳ Laden… (geen bereik?)</div>'
     : !st.active ? '<div class="otstate">⚪ Nog niet gekoppeld.</div>'
     : fresh ? `<div class="otstate ok">✅ <b>Verbonden.</b> Laatste locatie ${hhmm(info.t)} (±${info.acc ?? '?'} m${info.batt != null ? `, batterij ${info.batt}%` : ''}). Je mag Pretpark nu sluiten.</div>`
-    : info.t ? `<div class="otstate warn">⚠️ Laatste locatie om ${hhmm(info.t)}: al een tijd niets. Staat OwnTracks op <b>Move</b> en mag het <b>altijd</b> je locatie gebruiken?</div>`
+    : info.t ? `<div class="otstate warn">⚠️ Laatste locatie om ${hhmm(info.t)}: al een tijd niets. Staat OwnTracks bovenaan op <b>Actie</b> en mag het <b>altijd</b> je locatie gebruiken?</div>`
     : '<div class="otstate">⏳ Gekoppeld, wacht op de eerste locatie. Tik in OwnTracks op <b>↑</b> (publiceer) om te testen.</div>';
 }
 function renderOt() {
@@ -1487,18 +1487,25 @@ function renderOt() {
     <ol class="ot-steps">
       <li><h3>Installeer OwnTracks</h3><p class="small muted">Gratis, zonder account, open source.</p><div class="ot-btns">${store1}</div></li>
       <li><h3>Koppel aan Pretpark</h3>
-        ${token ? `<p class="small muted">Tik op de knop. OwnTracks opent en vraagt of het de instellingen mag overnemen: tik op <b>OK / Importeren</b>.</p>
+        ${token ? `<div class="ot-ways">
+          <h4>Manier 1: zelf invullen (werkt altijd)</h4>
+          <ol class="small ot-sub">
+            <li><button data-go="otcopy">📋 Kopieer je geheime link</button></li>
+            <li>In OwnTracks: tik linksboven op <b>ⓘ</b> › <b>Instellingen</b>${isAndroid ? ' (Android: menu ☰ › Voorkeuren › Verbinding)' : ''}.</li>
+            <li><b>Modus</b>: kies <b>HTTP</b>. Bij <b>URL</b>: plak de link. Gebruikersnaam en wachtwoord: leeg laten.</li>
+            <li>Terug naar de kaart en kies bovenaan <b>Actie</b> (in het Engels: <i>Move</i>).</li>
+          </ol>
+          <p class="ot-url"><code>${esc(otUrl(token))}</code></p>
+          <h4>Manier 2: met één knop</h4>
+          <p class="small">OwnTracks laat dat pas toe als je het eerst zelf aanzet: in OwnTracks › <b>ⓘ</b> › <b>Instellingen</b>, de schakelaar om <b>configuratie via URL/bestand</b> toe te staan, en bevestig. Krijg je “URI or file configuration not allowed”, dan staat die nog uit.</p>
           <div class="ot-btns"><a class="btn primary big" href="${otConfigLink(token)}">⚙️ Instellen in OwnTracks</a></div>
-          <details class="small"><summary>Lukt de knop niet? Zelf instellen</summary>
-            <p>In OwnTracks › Instellingen (of ⓘ › Instellingen): <b>Modus: HTTP</b>, <b>URL</b> = de link hieronder, <b>Monitoring: Move</b>. Gebruikersnaam en wachtwoord leeg laten.</p>
-            <p class="ot-url"><code>${esc(otUrl(token))}</code></p><button data-go="otcopy">📋 Kopieer de link</button>
-            <p class="muted">Deze link is geheim: wie hem heeft, kan locaties naar jullie gezin sturen. Deel hem niet.</p></details>`
+          <p class="small muted">Zet die schakelaar daarna gerust weer uit. De link is geheim: wie hem heeft, kan locaties naar jullie gezin sturen. Deel hem niet.</p></div>`
           : '<p class="small muted">Verschijnt zodra je gekozen hebt wie je bent.</p>'}</li>
       <li><h3>Locatie altijd toestaan</h3><p class="small">${perm}</p></li>
-      <li><h3>Test</h3><p class="small">In OwnTracks staat bovenaan <b>Move</b> (dat zette stap 2). Tik op <b>↑</b> om je locatie nu te sturen: bovenaan deze pagina verschijnt ✅ binnen enkele seconden.</p></li>
+      <li><h3>Test</h3><p class="small">Kies in OwnTracks bovenaan <b>Actie</b> (niet “Significant”: dat meet maar om de paar honderd meter). Tik op <b>↑</b> (delen/publiceren) om je locatie nu te sturen: bovenaan deze pagina verschijnt ✅ binnen enkele seconden.</p></li>
     </ol>
     <div class="card ot-info"><h3>Goed om te weten</h3>
-      <ul class="small"><li>🔋 Move-modus gebruikt de GPS op de achtergrond: reken op flink wat batterij. Een powerbank helpt.</li>
+      <ul class="small"><li>🔋 De modus Actie (Move) gebruikt de GPS op de achtergrond: reken op flink wat batterij. Een powerbank helpt.</li>
       <li>🔒 Je locatie gaat alleen naar jullie Pretpark-server. Die houdt het spoor van de laatste 45 minuten bij (om te herkennen wat jullie doen) en je laatste positie (het puntje bij je partner). De koppeling verdwijnt na een dag zonder locaties.</li>
       <li>🤖 Wat het herkent: in de rij, aan de beurt, gedaan (bij splitsen: “wij zijn klaar”), uit de rij, eten, rust en de parkeerplek. Klopt iets niet: open Pretpark en tik “Klopt niet”.</li>
       <li>🌙 Na het park: tik hieronder op <b>Stoppen</b> en zet OwnTracks op <b>Quiet</b> of verwijder de app.</li></ul></div>

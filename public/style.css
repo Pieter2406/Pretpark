@@ -516,3 +516,5 @@ html { transition: background-color .4s; }
 .ot-info { max-width: 640px; margin: 14px auto; }
 .ot-info ul { padding-left: 4px; list-style: none; display: grid; gap: 6px; margin: 6px 0 0; }
 .otview .row2 { max-width: 640px; margin: 10px auto 30px; }
+.ot-ways h4 { margin: 10px 0 4px; font-size: 1rem; }
+.ot-sub { padding-left: 20px; margin: 4px 0; display: grid; gap: 4px; }
