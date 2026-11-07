@@ -44,7 +44,8 @@ export default {
     } catch (err) {
       if (err.status) return json({ error: err.message }, err.status);
       console.error(err);
-      return json({ error: 'server error' }, 500);
+      // the reason is shown to the (logged-in) family's phone, which reports it via /api/diag
+      return json({ error: 'server error', detail: `${err?.name || ''}: ${String(err?.message || err).slice(0, 160)}` }, 500);
     }
   },
   async scheduled(event, env, ctx) {

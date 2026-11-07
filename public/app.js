@@ -2000,7 +2000,7 @@ async function postPhoto(u, fd, ms) {
   const t0 = Date.now();
   try {
     const r = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual', signal: timeoutSignal(ms) });
-    if (!r.ok) diag('up-http', `${u.id} ${fd.has('full') ? 'full' : 'thumb'}: ${r.status} ${r.type} ${(await r.clone().text().catch(() => '')).slice(0, 120)}`);
+    if (!r.ok) diag('up-http', `${u.id} ${fd.has('full') ? 'full' : 'thumb'}: ${r.status} ${r.type} ${(await r.clone().text().catch(() => '')).slice(0, 260)}`);
     return r;
   } catch (e) { // no signal or too slow: try again later
     diag('up-fail', `${u.id} ${fd.has('full') ? 'full' : 'thumb'} after ${Math.round((Date.now() - t0) / 1000)} s: ${e?.name} ${e?.message} · online=${navigator.onLine}`);
