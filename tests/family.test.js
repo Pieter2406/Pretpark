@@ -288,3 +288,28 @@ test('review fixes: a second "queue" keeps the first start and the boarding; don
   h = apply(h, { type: 'done', ids: [together.parts[0].id] }, NOW);
   assert.equal(h.waits, undefined);
 });
+
+test('done for an old plan counts nothing (two phones detecting it); unqueue removes only an unboarded queue', () => {
+  let f = withTarget(together, NOW - 3600e3);
+  const setAt = f.target.setAt, id = together.parts[0].id;
+  f = apply(f, { type: 'done', ids: [id], target: setAt }, NOW);
+  assert.equal(f.done[id], 1);
+  f = apply(f, { type: 'done', ids: [id], target: setAt }, NOW + 1000); // the other phone, a moment later
+  assert.equal(f.done[id], 1);
+  // without target (old clients, the guide's solo ride) it still counts
+  f = apply(f, { type: 'done', ids: [id] }, NOW + 2000);
+  assert.equal(f.done[id], 2);
+  let g = withTarget(split, NOW - 3600e3);
+  g = apply(g, { type: 'queue', part: 1, wait: 10 }, NOW - 30 * 60e3);
+  g = apply(g, { type: 'queue', part: 0, wait: 10 }, NOW - 30 * 60e3);
+  g = apply(g, { type: 'unqueue', part: 1 }, NOW - 20 * 60e3);
+  assert.deepEqual(Object.keys(g.target.q), ['0']);
+  g = apply(g, { type: 'board', part: 0 }, NOW - 10 * 60e3);
+  g = apply(g, { type: 'unqueue', part: 0 }, NOW - 5 * 60e3); // boarded: stays
+  assert.ok(g.target.q[0].b);
+  let h = withTarget(together, NOW - 3600e3);
+  h = apply(h, { type: 'queue', wait: 10 }, NOW - 30 * 60e3);
+  h = apply(h, { type: 'unqueue' }, NOW - 25 * 60e3);
+  assert.equal(h.target.q, undefined);
+  assert.equal(h.target.queued, undefined);
+});

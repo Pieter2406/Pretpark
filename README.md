@@ -18,9 +18,11 @@ Alleen Pieter, Marjan en Vincent kunnen de app openen: vul je e-mailadres in en 
 
 6. **⏳ In de rij**: tik *In de rij* en het Nu-scherm telt af. Speel *Raad de wachttijd* (wie het dichtst zit wint), doe een 🎃 *Foto-opdracht*, lees weetjes en speel de 🧠 *quiz* (punten de hele dag), en stuur bij het splitsen een 📣 *Seintje* naar de anderen. Tik *We zijn aan de beurt!*. Na *Gedaan* kiest iedereen 😍 🙂 of 😬: het plan houdt er rekening mee.
 
-7. **📸 Album**: maak foto’s met de gele knop of voeg ze toe uit je galerij. Ze gaan in originele kwaliteit naar jullie gedeelde album; zonder bereik wachten ze op de gsm. Markeer de mooiste met ⭐ en bekijk ’s avonds **Ons dagverslag**.
+7. **🤖 Automatisch**: de app herkent zelf wanneer jullie in de rij staan, aan de beurt zijn, klaar zijn, eten of rusten, en waar de auto staat. Altijd met een *Klopt niet*-knop; vreemde locatiesprongen worden genegeerd. Een web-app krijgt geen locatie als ze dicht is: wat er intussen gebeurde, leidt ze af als je ze weer opent. Wil je dat ze blijft volgen met de gsm in je zak: **🫥 Zakmodus** (zwart scherm, ±10% batterij per uur).
 
-8. **💬 Gezinschat** (knop bovenaan): berichten aan elkaar, snelle antwoorden en **📍 Deel mijn plek**. De ander tikt op *Breng me erheen* en de pijl wijst de weg naar jou.
+8. **📸 Album**: maak foto’s met de gele knop of voeg ze toe uit je galerij. Ze gaan in originele kwaliteit naar jullie gedeelde album; zonder bereik wachten ze op de gsm. Markeer de mooiste met ⭐ en bekijk ’s avonds **Ons dagverslag**.
+
+9. **💬 Gezinschat** (knop bovenaan): berichten aan elkaar, snelle antwoorden en **📍 Deel mijn plek**. De ander tikt op *Breng me erheen* en de pijl wijst de weg naar jou.
 
 Zonder bereik werkt de app verder met de laatste wachttijden. Tickets, kaart en wandelgids werken volledig offline, en wijzigingen worden verstuurd zodra er weer bereik is.
 

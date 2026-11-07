@@ -118,6 +118,9 @@ export function apply(fam, act, now) {
       break;
     }
     case 'done': {
+      // "done" for a plan that is no longer the current one (the other phone, or the automatic detection on both
+      // phones, already finished it): nothing to count twice
+      if (act.target != null && (!target || target.setAt !== act.target)) break;
       const ids = (Array.isArray(act.ids) ? act.ids : []).filter(okId).slice(0, 3);
       // a queue nobody tapped "aan de beurt" for: estimate the wait as queue → done minus the ride and getting off.
       // Only the sender's own part (the other half may still be in line), only with a known posted wait, and not
@@ -153,6 +156,15 @@ export function apply(fam, act, now) {
       // the second phone (or a late replay) tapping it again keeps the first start and "aan de beurt"
       if (old) { if (old.w == null) old.w = num(act.wait, 0, 300, null); break; }
       target.q = { ...(target.q || {}), [part]: { t, w: num(act.wait, 0, 300, null), g: {} } };
+      break;
+    }
+    // left the queue without riding (tapped, or detected: back out of the ride area after a couple of minutes)
+    case 'unqueue': {
+      if (!target || beforeTarget()) break;
+      const part = partOf(act, target);
+      if (!target.q?.[part] || target.q[part].b) break;
+      const q = { ...target.q }; delete q[part];
+      if (Object.keys(q).length) target.q = q; else { delete target.q; delete target.queued; }
       break;
     }
     // "it's our turn": the real wait is known now (for the guessing game and the planner's wait factor)

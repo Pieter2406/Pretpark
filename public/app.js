@@ -3,6 +3,7 @@
 import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
 import { plans, foodOptions, canRide, status, byId, walkMin, isMealTime, distM, raining, WX_ICON, sunTimes, isDaylight, waitFactor } from './logic.js';
 import { QUESTS, FACTS } from './fun.js';
+import { newTracker, addFix, detect, farState } from './activity.js';
 import { makePark, pathLength, bearingXY } from './route.js';
 import { apply, phoneOf } from './family.js';
 import { idb } from './idb.js';
@@ -23,6 +24,9 @@ const device = store.get('device') || (() => { const d = rnd(16); store.set('dev
 const S = {
   famId: null, fam: null, famUpdated: 0, live: null, park: null, here: null, plans: [],
   gps: null, gpsAt: 0, manual: store.get('manual', null), sim: 'wait', heading: null, headingSrc: null,
+  // location cleaning + "what are we doing" (activity.js); auto = recognise queue/done/eat/rest/car by itself
+  tr: (() => { const t = store.get('tracker', null); return t && Array.isArray(t.hist) && t.far ? t : newTracker(); })(),
+  auto: store.get('auto', true), autoLog: store.get('autoLog', []), pendingRate: null, ask: null, pocket: false, gpsReject: '',
   tickets: [], ticketBusy: '', auth: false, liveStale: false, outbox: [], offline: false,
   album: store.get('c:album', null)?.v || [], uploads: [], upMsg: '', albumOff: false,
   tab: 'now', mapMode: 'map', guide: null, filter: 'us', placing: false, dismissed: store.get('dismissed', {}),
@@ -199,18 +203,36 @@ const pos = () => {
   if (S.gps && S.sim === null && Date.now() - S.gpsAt < 20 * 60e3) return S.gps;
   return ENTRANCE;
 };
-let lastPlanPos = null, lastPost = { t: 0, p: null };
+let lastPlanPos = null, lastPost = { t: 0, p: null }, watchId = null, trSaveT = null;
+const saveTracker = () => { clearTimeout(trSaveT); trSaveT = setTimeout(() => store.set('tracker', S.tr), 15000); };
 function onGps(p) {
-  S.gps = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }; S.gpsAt = Date.now();
-  S.sim = distM(S.gps, ENTRANCE) > 1500 ? 'far' : null;
-  if (S.headingSrc !== 'compass' && p.coords.heading != null && p.coords.speed > 0.6) { S.heading = p.coords.heading; S.headingSrc = 'gps'; }
+  const c = p.coords, now = Date.now();
+  // some phones stamp fixes with a clock that isn't the wall clock: only trust the fix's own time when plausible
+  const t = Math.abs((p.timestamp || 0) - now) < 3600e3 ? p.timestamp : now;
+  const r = addFix(S.tr, { lat: c.latitude, lon: c.longitude, acc: c.accuracy, t, speed: c.speed ?? null }, now);
+  saveTracker();
+  if (!r.ok) {
+    // a rejected fix (too inaccurate, cached, a jump) changes nothing; only say why when it keeps happening
+    S.gpsReject = r.reason;
+    if (r.reason === 'approx') { if (!S.gps && S.sim === 'wait') S.sim = null; if (Date.now() - (onGps.bannerT || 0) > 30e3) { onGps.bannerT = Date.now(); renderBanners(); } }
+    if (S.pocket) renderPocket();
+    return;
+  }
+  S.gpsReject = '';
+  S.gps = { lat: r.pos.lat, lon: r.pos.lon, acc: r.pos.acc }; S.gpsAt = now;
+  const wasSim = S.sim;
+  S.sim = farState(S.tr, r.pos, ENTRANCE) ? 'far' : null;
+  if (wasSim !== S.sim) renderBanners();
+  if (S.headingSrc !== 'compass' && c.heading != null && c.speed > 0.6 && c.accuracy <= 30) { S.heading = c.heading; S.headingSrc = 'gps'; }
   const here = pos();
-  if (!lastPlanPos || distM(lastPlanPos, here) > 12) { recompute(); render(); }
+  if (S.pocket) { if (!lastPlanPos || distM(lastPlanPos, here) > 40) { lastPlanPos = here; recompute(); } renderPocket(); }
+  else if (!lastPlanPos || distM(lastPlanPos, here) > 12) { recompute(); render(); }
   else if (S.guide) { S.here = S.park.fromHere(here); updateGuide(); } // the guide follows every fix, the plan only every 12 m
-  if (S.famId && !S.sim && (!lastPost.p || (distM(lastPost.p, here) > 25 && Date.now() - lastPost.t > 60e3) || Date.now() - lastPost.t > 180e3)) {
-    lastPost = { t: Date.now(), p: here };
+  if (S.famId && !S.sim && (!lastPost.p || (distM(lastPost.p, here) > 25 && now - lastPost.t > 60e3) || now - lastPost.t > 180e3)) {
+    lastPost = { t: now, p: here };
     act({ type: 'pos', device, lat: here.lat, lon: here.lon }, true);
   }
+  runDetect(r.gap);
 }
 function onGpsError(err) {
   // only "not allowed" means no location; a timeout in a queue or between buildings keeps the last fix
@@ -218,7 +240,117 @@ function onGpsError(err) {
 }
 function startGps() {
   if (!navigator.geolocation) { S.sim = 'off'; return; }
-  navigator.geolocation.watchPosition(onGps, onGpsError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  // maximumAge 0: never a cached fix (we check the age ourselves too); the watch is restarted when the app comes
+  // back to the front, because phones stop it in the background and don't always resume it
+  watchId = navigator.geolocation.watchPosition(onGps, onGpsError, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+}
+const insidePark = (p) => {
+  const o = S.park?.data?.outline; if (!o) return false;
+  const q = S.park.toXY(p); let inside = false;
+  for (let i = 0, j = o.length - 2; i < o.length; j = i, i += 2) {
+    const xi = o[i], yi = o[i + 1], xj = o[j], yj = o[j + 1];
+    if ((yi > q.y) !== (yj > q.y) && q.x < ((xj - xi) * (q.y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+
+// ---------- automatic: what are we doing? (activity.js decides; here we apply it, always with "Klopt niet")
+function myTarget() {
+  const t = S.fam?.target, plan = t?.plan;
+  if (!plan || (plan.type === 'split' && !meId())) return null; // don't act for the wrong half
+  const i = myIdx(plan), pt = plan.parts[i];
+  if (!pt) return null;
+  const q = t.q?.[i] || (!t.q && t.queued ? { t: t.queued } : null);
+  return { i, plan, a: pt.rest ? null : byId[pt.id], rest: !!pt.rest, setAt: t.setAt, queuedAt: q?.t || null, boardedAt: q?.b || null,
+    wait: q?.w ?? (pt.id ? status(S.live, pt.id).wait ?? pt.wait : null) };
+}
+function runDetect(gap) {
+  if (!S.auto || !S.fam || S.sim || S.manual) return;
+  const T = myTarget();
+  const ev = detect(S.tr, { now: Date.now(), target: T, foods: FOOD, mealTime: isMealTime(new Date()), ate: S.fam.ate, pause: S.fam.pause,
+    entrance: ENTRANCE, inPark: insidePark, carT: S.fam.car?.t || 0, gap });
+  if (ev.length) saveTracker();
+  for (const e of ev) autoApply(e, T);
+}
+function autoLog(text) {
+  S.autoLog = [{ t: Date.now(), text }, ...S.autoLog].slice(0, 6); store.set('autoLog', S.autoLog);
+  buzz([20, 60, 20]);
+}
+async function autoApply(e, T) {
+  const name = T?.a?.name || '';
+  switch (e.type) {
+    case 'queue':
+      if (!(await act({ type: 'queue', part: T.i, wait: T.wait, at: e.at }, true))) return;
+      autoLog(`⏳ In de rij bij ${name} sinds ${hhmm(e.at)}`);
+      toast(`⏳ In de rij bij ${name} (automatisch)`, { label: 'Klopt niet', fn: () => act({ type: 'unqueue', part: T.i }) }, 8000);
+      break;
+    case 'board':
+      if (!(await act({ type: 'board', part: T.i, at: e.at }, true))) return;
+      autoLog(`🎢 Aan de beurt bij ${name}`);
+      break;
+    case 'unqueue':
+      if (!(await act({ type: 'unqueue', part: T.i }, true))) return;
+      autoLog(`↩️ Rij bij ${name} verlaten`);
+      toast(`↩️ Rij bij ${name} verlaten? (automatisch)`, { label: 'Klopt niet', fn: () => act({ type: 'queue', part: T.i, wait: T.wait, at: T.queuedAt }) }, 8000);
+      break;
+    case 'done': await finishPlan({ auto: true, at: e.at }); break;
+    case 'ask-done': if (T?.a) { S.ask = { id: T.a.id, setAt: T.setAt }; buzz([20, 60, 20]); render(); } break;
+    case 'ate':
+      if (!(await act({ type: 'ate', at: e.at }, true))) return;
+      autoLog(`😋 Gegeten${e.where ? ` bij ${e.where}` : ''}`); toast('😋 Smakelijk! (eten herkend)'); break;
+    case 'pause':
+      if (!(await act({ type: 'pause', at: e.at }, true))) return;
+      autoLog('🪑 Even gerust'); break;
+    case 'car':
+      if (!(await act({ type: 'car', lat: e.lat, lon: e.lon, note: 'automatisch bewaard', at: e.at }, true))) return;
+      autoLog('🚗 Parkeerplek bewaard');
+      toast('🚗 Parkeerplek automatisch bewaard', { label: 'Klopt niet', fn: () => act({ type: 'car', lat: null }) }, 8000);
+      break;
+  }
+  render();
+}
+// The detection card on Nu: open questions ("gedaan?", "hoe was het?") and what was recognised last
+function autoCard() {
+  let html = '';
+  if (S.ask && S.fam?.target?.setAt === S.ask.setAt) {
+    const a = byId[S.ask.id];
+    html += `<div class="autoq"><span>🤔 Hebben jullie <b>${esc(a?.name || '')}</b> gedaan?</span><span class="row2"><button class="primary" data-go="askyes">✓ Ja</button><button data-go="askno">Nee</button></span></div>`;
+  } else S.ask = null;
+  const pr = S.pendingRate;
+  if (pr && Date.now() - pr.t < 90 * 60e3) {
+    const a = byId[pr.id];
+    html += `<div class="autoq"><span>${icon(a)} Hoe was <b>${esc(a?.name || '')}</b>?</span><button data-go="rateopen">😍 🙂 😬</button><button class="ghost small" data-go="ratelater" aria-label="Niet nu">✕</button></div>`;
+  }
+  const last = S.auto && S.autoLog[0] && Date.now() - S.autoLog[0].t < 30 * 60e3 ? S.autoLog[0] : null;
+  if (last) html += `<p class="small muted autolog">🤖 ${esc(last.text)} · ${hhmm(last.t)}</p>`;
+  return html;
+}
+
+// ---------- pocket mode: screen on (black) so the location keeps coming while the phone is in a pocket
+async function openPocket() {
+  // only useful when the screen really stays on: a web page gets no location with the screen off
+  if (!(await wake(true))) { toast('Zakmodus lukt niet op deze gsm: het scherm mag niet aan blijven (iPhone-beginschermapp: iOS 18.4 of nieuwer nodig, of spaarstand staat aan).', null, 7000); return; }
+  S.pocket = true;
+  $('#pocket').hidden = false; openDialog($('#pocket'));
+  renderPocket();
+}
+function closePocket() {
+  if (!S.pocket) return;
+  S.pocket = false; $('#pocket').hidden = true; closeDialog($('#pocket'));
+  if (!S.guide && $('#tview').hidden) wake(false);
+  render();
+}
+function renderPocket() {
+  const el = $('#pocket'); if (!el || el.hidden) return;
+  const T = myTarget();
+  const q = T?.queuedAt ? `⏳ In de rij bij ${T.a?.name || ''} sinds ${hhmm(T.queuedAt)}` : T?.a ? `🎯 ${T.a.name}` : '';
+  const gps = !S.gps || Date.now() - S.gpsAt > 2 * 60e3 ? '📡 zoekt locatie…' : `📍 ±${Math.round(S.gps.acc || 0)} m`;
+  el.querySelector('.pk-time').textContent = hhmm(Date.now());
+  el.querySelector('.pk-what').textContent = q;
+  const last = S.autoLog[0] && Date.now() - S.autoLog[0].t < 30 * 60e3 ? S.autoLog[0].text : '';
+  el.querySelector('.pk-auto').textContent = last && last !== q ? '🤖 ' + last : '';
+  el.querySelector('.pk-gps').textContent = gps;
 }
 
 // ---------- compass (iOS asks permission on every start, so it's requested from the tap that opens the guide)
@@ -430,7 +562,9 @@ function renderNow() {
   } else {
     html += '<p class="kicker">Doe nu dit</p>' + ticket(S.plans[0], false);
   }
+  html += autoCard();
   if (!meId() && people().some((p) => p.kind === 'adult')) html += '<button class="ghost small whoami" data-go="onboard">🙋 Wie ben jij op deze gsm? Tik om te kiezen</button>';
+  if (navigator.wakeLock && S.gps && !S.sim) html += '<button class="ghost small pocketbtn" data-go="pocket">🫥 Zakmodus: blijf volgen met de gsm in je zak <span class="muted">(±10% batterij/uur)</span></button>';
   html += `<div class="quick">
     <button data-go="food"><span aria-hidden="true">🍽️</span>Eten</button>
     <button data-go="toilet"><span aria-hidden="true">🚻</span>Toilet</button>
@@ -658,6 +792,11 @@ function renderFam() {
       <div class="seg themeseg" role="radiogroup" aria-label="Kleuren">${[['sun', '🌅 Automatisch (zon)'], ['light', '☀️ Licht'], ['dark', '🌙 Donker'], ['system', '📱 Zoals mijn gsm']].map(([k, t]) => `<button role="radio" data-themepick="${k}" aria-checked="${S.theme === k}" aria-pressed="${S.theme === k}">${t}</button>`).join('')}</div>
       <p class="small muted" style="margin:6px 0 10px">${S.theme === 'sun' ? (() => { const st = sunTimes(new Date()); return `Vandaag licht van ${hhmm(st.rise)} tot zonsondergang om ${hhmm(st.set)}, daarna donker.`; })() : S.theme === 'system' ? 'Volgt de licht/donker-instelling van je gsm.' : ''}</p>
       <label class="tog"><input type="checkbox" data-setting="voice" ${S.voice ? 'checked' : ''}> 🔊 Gesproken aanwijzingen in de wandelgids</label></div>
+    <div class="card"><h2>🤖 Automatisch herkennen</h2>
+      <label class="tog"><input type="checkbox" data-setting="auto" ${S.auto ? 'checked' : ''}> Herken zelf wat we doen</label>
+      <p class="small muted" style="margin:6px 0 0">Aan de hand van je locatie en de tijd: in de rij, aan de beurt, klaar, uit de rij, eten, rusten en waar de auto staat. Je krijgt altijd een “Klopt niet”-knop. Vreemde locatiesprongen negeert de app.</p>
+      <p class="small muted" style="margin:6px 0 0">Een web-app krijgt geen locatie als de app dicht is of het scherm uit staat. Wat er intussen gebeurde, leidt de app af als je ze weer opent. Wil je dat ze blijft volgen in je zak: tik op Nu op <b>🫥 Zakmodus</b> (zwart scherm, scherm blijft aan, kost wat batterij).</p>
+      ${S.gpsReject ? `<p class="small muted" style="margin:6px 0 0">Laatste locatie genegeerd: ${{ acc: 'te onnauwkeurig', jump: 'onmogelijke sprong', stale: 'te oud', old: 'dubbel', approx: '“ongeveer”-locatie', bad: 'ongeldig' }[S.gpsReject] || S.gpsReject}.</p>` : ''}</div>
     <div class="card"><h2>👨‍👩‍👧‍👦 Ons gezin</h2>
       <form id="peopleForm">${ps.map((p) => `
         <div class="person" data-id="${p.id}" data-kind="${p.kind}">
@@ -749,7 +888,8 @@ async function wake(on) {
   try {
     if (on && !wakeLock && navigator.wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
     if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
-  } catch { /* not supported */ }
+  } catch { /* not supported, or refused (power saving; iOS home-screen apps before 18.4) */ }
+  return !!wakeLock;
 }
 function say(text, force) {
   if (!S.voice || !window.speechSynthesis || !text) return;
@@ -880,8 +1020,18 @@ function closeDialog(el) {
 }
 const closers = {
   sheet: () => closeSheet(), guide: () => closeGuide(), tview: () => closeViewer(), pview: () => closePhoto(),
-  story: () => closeStory(), chat: () => closeChat(),
+  story: () => closeStory(), chat: () => closeChat(), pocket: () => closePocket(),
 };
+// pocket mode: only a long swipe up opens the app again (taps through the fabric do nothing)
+{
+  const pk = document.getElementById('pocket');
+  let y0 = null;
+  pk?.addEventListener('touchstart', (e) => { y0 = e.touches[0].clientY; }, { passive: true });
+  pk?.addEventListener('touchend', (e) => { if (y0 != null && y0 - e.changedTouches[0].clientY > 160) closePocket(); y0 = null; });
+  pk?.addEventListener('dblclick', closePocket); // mouse / desktop
+}
+addEventListener('pagehide', () => store.set('tracker', S.tr));
+setInterval(() => { if (S.pocket) renderPocket(); }, 30e3);
 addEventListener('popstate', () => {
   if (skipPops) { skipPops--; return; }
   const top = dialogStack.at(-1);
@@ -1085,6 +1235,46 @@ function queueCard() {
     </div>
     ${next ? `<p class="small muted qnext">Hierna waarschijnlijk: ${next.a.icon} <b>${esc(next.a.name)}</b>${next.wait != null ? ` (${num(next.wait)} min wachten)` : ''}. Bij “Gedaan” kijk ik opnieuw.</p>` : ''}
     ${tail}</section>`;
+}
+// "Gedaan" (tapped, or recognised: auto = true). In a split, while the other half is still in its queue, it says
+// "wij zijn klaar" instead and keeps the plan. The done action names the plan (target = setAt) so it counts once.
+async function finishPlan({ auto = false, at } = {}) {
+  const plan = S.fam.target?.plan;
+  const ids = plan ? plan.parts.filter((p) => !p.rest).map((p) => p.id) : S.guide ? [S.guide.id] : [];
+  const mine = plan ? myPart(plan) : null;
+  const rated = mine && !mine.rest ? mine.id : ids[0];
+  const who = mine && !mine.rest ? mine.ride || [] : plan ? [] : people().filter((p) => byId[rated] && canRide(p, byId[rated])).map((p) => p.id);
+  const unknown = plan?.type === 'split' && !meId(); // don't rate or report for the wrong half
+  if (S.guide && !auto) closeGuide();
+  await flushGuesses();
+  const t = S.fam.target, i = plan ? myIdx(plan) : 0;
+  const other = plan?.type === 'split' ? plan.parts[1 - i] : null;
+  const name = byId[rated]?.name || '';
+  // the other half is still in their queue (or, when this phone decided by itself, hasn't finished yet): tell them
+  // we're done and keep the plan until everyone is back; recognising our own ride never ends theirs
+  const othersBusy = other && !other.rest && !t.ready?.[1 - i] && (auto || (t.q?.[1 - i] && !t.q[1 - i].b));
+  if (!unknown && othersBusy && !t.ready?.[i]) {
+    if (!(await act({ type: 'ready', part: i, device, ...(at ? { at } : {}) }, auto))) return;
+    if (auto) { autoLog(`✅ ${name} gedaan: de anderen weten het`); S.pendingRate = who.length && byId[rated]?.cat ? { id: rated, who, t: Date.now() } : null; render(); return; }
+    toast('✅ De anderen krijgen een seintje. Tik nog eens op Gedaan als jullie weer samen zijn.', null, 6000);
+    if (who.length && byId[rated]?.cat) rateSheet(rated, who);
+    return;
+  }
+  const old = t ? { plan: t.plan } : null;
+  if (!(await act({ type: 'done', ids, ...(t ? { target: t.setAt } : {}), ...(plan && !unknown ? { part: i } : {}), ...(at ? { at } : {}) }, auto))) return;
+  if (auto) {
+    autoLog(`🎉 ${name} gedaan`);
+    S.pendingRate = !unknown && who.length && byId[rated]?.cat ? { id: rated, who, t: Date.now() } : null;
+    toast(`🎉 ${name} gedaan (automatisch)`, { label: 'Klopt niet', fn: async () => {
+      for (const id of ids) await act({ type: 'undo', id }, true);
+      if (old) await act({ type: 'target', plan: old.plan, device });
+      S.pendingRate = null; render();
+    } }, 10000);
+    render();
+    return;
+  }
+  celebrate(); scrollTo(0, 0);
+  if (!unknown && who.length && byId[rated]?.cat) rateSheet(rated, who); else photoMoment(ids);
 }
 // "we're done around 14:35 at the exit of X", rounded up to 5 minutes, sent to the family chat (and pushed)
 function signalOthers() {
@@ -1635,6 +1825,7 @@ function renderBanners() {
   if (S.offline) b.push(['offline', '📶', `<b>Geen bereik.</b> Ik werk verder met de laatste gegevens${S.live?.t ? ` (wachttijden van ${hhmm(S.live.t)})` : ''}.${S.outbox.length ? ` ${S.outbox.length} wijziging(en) wachten.` : ''}`]);
   if (!S.manual && S.sim === 'far') b.push(['far', '📍', '<b>Je bent niet in Walibi.</b> Ik reken vanaf de ingang.']);
   if (!S.manual && S.sim === 'off') b.push(['off', '📍', '<b>Locatie staat uit.</b> Ik reken vanaf de ingang. Zet locatie aan voor de wandelgids.']);
+  if (!S.manual && S.sim !== 'off' && Date.now() - S.tr.approx < 5 * 60e3 && (!S.gps || Date.now() - S.gpsAt > 2 * 60e3)) b.push(['approx', '📍', `<b>Locatie is maar “ongeveer”.</b> Zet <b>Exacte locatie</b> aan: ${/iPhone|iPad/.test(navigator.userAgent) ? 'Instellingen › Privacy › Locatievoorzieningen › Safari-websites' : 'Instellingen › Apps › Chrome › Rechten › Locatie'}.`]);
   if (S.manual) b.push(['manual', '📍', 'Je hebt je positie zelf gekozen op de kaart.']);
   const L = S.live;
   if (L?.open && Date.now() < L.open) b.push(['before', '🕙', `Walibi opent om <b>${hhmm(L.open)}</b>.`]);
@@ -1759,29 +1950,12 @@ document.addEventListener('click', async (e) => {
   switch (go) {
     case 'guide': if (S.fam.target?.plan) guideTap(guideTargetFor(S.fam.target.plan)); break;
     case 'guideclose': closeGuide(); break;
-    case 'done': {
-      const plan = S.fam.target?.plan;
-      const ids = plan ? plan.parts.filter((p) => !p.rest).map((p) => p.id) : S.guide ? [S.guide.id] : [];
-      const mine = plan ? myPart(plan) : null;
-      const rated = mine && !mine.rest ? mine.id : ids[0];
-      const who = mine && !mine.rest ? mine.ride || [] : plan ? [] : people().filter((p) => byId[rated] && canRide(p, byId[rated])).map((p) => p.id);
-      const unknown = plan?.type === 'split' && !meId(); // don't rate or report for the wrong half
-      if (S.guide) closeGuide();
-      await flushGuesses();
-      const t = S.fam.target, i = plan ? myIdx(plan) : 0;
-      const other = plan?.type === 'split' ? plan.parts[1 - i] : null;
-      if (!unknown && other && !other.rest && !t.ready?.[i] && !t.ready?.[1 - i] && t.q?.[1 - i] && !t.q[1 - i].b) {
-        // the other half is still in their queue: tell them we're done, keep the plan until everyone is back
-        if (!(await act({ type: 'ready', part: i, device }))) break;
-        toast('✅ De anderen krijgen een seintje. Tik nog eens op Gedaan als jullie weer samen zijn.', null, 6000);
-        if (who.length && byId[rated]?.cat) rateSheet(rated, who);
-        break;
-      }
-      if (!(await act({ type: 'done', ids, ...(plan && !unknown ? { part: i } : {}) }))) break;
-      celebrate(); scrollTo(0, 0);
-      if (!unknown && who.length && byId[rated]?.cat) rateSheet(rated, who); else photoMoment(ids);
-      break;
-    }
+    case 'done': await finishPlan(); break;
+    case 'askyes': S.ask = null; await finishPlan({ at: Date.now() }); break;
+    case 'askno': S.ask = null; render(); break;
+    case 'rateopen': { const pr = S.pendingRate; S.pendingRate = null; if (pr) rateSheet(pr.id, pr.who); render(); break; }
+    case 'ratelater': S.pendingRate = null; render(); break;
+    case 'pocket': openPocket(); break;
     case 'queue': {
       const plan = S.fam.target?.plan; if (!plan) break;
       if (plan.type === 'split' && !meId()) { toast('Kies eerst wie je bent, dan weet ik welke rij van jullie is'); onboard('who'); break; }
@@ -1972,7 +2146,8 @@ addEventListener('online', () => { flushOutbox(); syncTickets(); loadLive(); pro
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   loadLive(); pollFamily();
-  if (S.guide || !$('#tview').hidden) wake(true); // the system drops the wake lock when the app goes to the background
+  if (S.guide || !$('#tview').hidden || S.pocket) wake(true); // the system drops the wake lock when the app goes to the background
+  startGps(); // phones pause or kill the location watch in the background; a fresh one picks up where we are now
 });
 
 // ---------- start

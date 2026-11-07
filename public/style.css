@@ -482,3 +482,16 @@ html { transition: background-color .4s; }
 .st-fun li span { float: right; }
 .st-fun p { margin: 4px 0; }
 .st-line .cap { font-size: .8rem; font-weight: 600; line-height: 1.2; }
+
+/* ---------- automatic detection + pocket mode */
+.autoq { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; background: var(--surface); border: 2px solid var(--sun); border-radius: 18px; padding: 10px 12px; margin: 8px 0; box-shadow: var(--shadow); }
+.autoq > span:first-child { flex: 1 1 180px; }
+.autoq .row2 { display: flex; gap: 8px; margin: 0; }
+.autoq .ghost.small { min-width: 44px; }
+.autolog { margin: 4px 4px 8px; }
+.pocketbtn, .whoami { width: 100%; }
+.pocket { position: fixed; inset: 0; z-index: 60; background: #000; color: #8d8d8d; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; touch-action: none; -webkit-user-select: none; user-select: none; }
+.pocket .pk-time { font-family: var(--display); font-size: 4.2rem; font-weight: 600; color: #b5b5b5; line-height: 1; }
+.pocket .pk-what { font-size: 1.15rem; color: #a5a5a5; }
+.pocket .pk-auto, .pocket .pk-gps { font-size: .95rem; }
+.pocket .pk-hint { position: absolute; bottom: calc(28px + env(safe-area-inset-bottom)); font-size: .9rem; color: #5c5c5c; }

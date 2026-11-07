@@ -173,3 +173,34 @@ No accounts; knowing the family id is the access.
   part keeps the first start and boarding. Queue/rate in a split needs "wie ben jij" (meId) first.
 - Guess drafts are sent through one promise chain (`flushGuesses`), awaited before `board`/`done`; the winner uses the
   real wait rounded to 0.1 min everywhere (`realWait`), like the server.
+
+## Location: cleaning, automatic detection, pocket mode
+- Facts (researched Nov 2026, sources in the session notes): a web page gets **no location in the background** on
+  iOS or Android (screen off, other app in front, app closed: watchPosition delivers nothing, WebKit even turns GPS off
+  when the page is hidden; no web API for background location; a service worker has no geolocation). So detection only
+  sees fixes while the app is open and reasons about the gaps when it comes back. `accuracy` is 1σ (≈68%); iOS's first
+  fix is often a cached one; "precise location" off gives ≈3–9 km accuracy and can't be detected otherwise; Screen Wake
+  Lock works on Android and iOS ≥ 16.4, in iOS home-screen apps only from 18.4, and is dropped whenever the page hides.
+- `public/activity.js` (pure, tested in tests/activity.test.js incl. 2 fuzz tests):
+  - `addFix` rejects: accuracy ≥ 1 km (sets `tr.approx` → banner "Exacte locatie"), older than 60 s (cached), out of
+    order, accuracy > 65 m (but keeps a "still here" point indoors), and jumps faster than 3 m/s (+ 2×accuracy noise;
+    up to 45 m/s when the phone itself reports a speed). 3 rejected fixes that agree with each other over ≥ 20 s
+    re-anchor (the anchor was wrong). The rest goes through a Kalman filter (q = 1.5 m/s, noise = accuracy) into a
+    10-s history (45 min, at least the last 30 points so a long gap still knows where we were).
+  - `farState`: "not in Walibi" at once before we were ever near; after that only on 3 good fixes over ≥ 60 s.
+  - `detect` only asks "are we at the TARGET ride" (rides are a median 37 m apart): queue after ≥ 3 min within 70/50/35 m
+    (thrill/family/kids); board on a phone speed ≥ 6 m/s there; leaving (> radius + 50 m for ≥ 60 s) → done when we
+    were there ≥ ride + max(1, 0.4·wait − 1) min, "unqueue" when < ride + 2, otherwise ask ("ask-done"); a gap ≥ 10 min
+    in the queue + first fix far away → done at once (time estimated); closed before arriving and back elsewhere much
+    later → ask. Only "visits" (≥ 90 s, ≥ 3 points) count, so a lone teleport or a wrong first fix never does anything.
+    Sitting still ≥ 15 min at a restaurant (meal time) → ate; ≥ 12 min elsewhere → pause; driving (phone speed ≥ 5 m/s,
+    outside the park outline) then walking within 1 km of the entrance → car spot.
+- app.js: `onGps` → `addFix` (the fix's own timestamp only when within 1 h of the clock) → `runDetect` → `autoApply`
+  (actions with `at`, quiet, toast with "Klopt niet": unqueue / queue again / undo + re-target / clear car). Done goes
+  through `finishPlan({auto})`: in a split, recognising our own ride only sends `ready` (never ends the other half's
+  plan). "Hoe was X?" and "Hebben jullie X gedaan?" are cards on Nu (`autoCard`), not pop-ups. The watch is restarted on
+  every return to the front (maximumAge 0). Setting `S.auto` (Gezin → 🤖). The tracker is kept in localStorage.
+- `done` carries `target` (= setAt): a done for a plan that is no longer current counts nothing (two phones detecting).
+  New action `unqueue`.
+- Pocket mode (🫥 on Nu): black screen + wake lock so fixes keep coming; only a long swipe up (or double click) opens;
+  refuses with an explanation when the wake lock is refused. ±10% battery per hour (screen on).
