@@ -39,6 +39,7 @@ export default {
       if (parts[1] === 'family') return await family(request, env, ctx, parts[2]);
       if (parts[1] === 'push') return await push(request, env);
       if (parts[1] === 'otsetup') return await otSetup(request, env, url, parts[2]);
+      if (parts[1] === 'diag' && request.method === 'POST') return await diag(request, env, email);
       return json({ error: 'not found' }, 404);
     } catch (err) {
       if (err.status) return json({ error: err.message }, err.status);
@@ -128,6 +129,8 @@ function schema(env) {
     env.DB.prepare('CREATE INDEX IF NOT EXISTS ot_device ON ot (family, device)'),
     // photos deleted on purpose: a late upload of the same id (the other phone, a retry) is refused with 410
     env.DB.prepare('CREATE TABLE IF NOT EXISTS photo_gone (id TEXT PRIMARY KEY, family TEXT NOT NULL, t INTEGER NOT NULL)'),
+    // problems a phone reports about itself (photo uploads, storage): so a failure on someone's phone can be seen
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS diag (t INTEGER NOT NULL, family TEXT, device TEXT, email TEXT, kind TEXT NOT NULL, msg TEXT NOT NULL)'),
   ]).catch((err) => { ready = null; throw err; });
   return ready;
 }
@@ -523,6 +526,21 @@ async function photos(request, env, email, fam, id, what) {
   return json({ ok: true, id, t, ...meta }, 201);
 }
 
+// ---------- a phone's own problem report (best effort, small, kept 3 days)
+async function diag(request, env, email) {
+  await schema(env);
+  const text = await request.text();
+  if (text.length > 8000) throw fail(413, 'too big');
+  let b; try { b = JSON.parse(text); } catch { throw fail(400, 'bad json'); }
+  const list = (Array.isArray(b.items) ? b.items : []).slice(0, 20);
+  const family = okFamily(b.family) ? b.family : null, device = okDevice(b.device) ? b.device : null;
+  for (const it of list) {
+    await env.DB.prepare('INSERT INTO diag (t, family, device, email, kind, msg) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(Number.isFinite(it.t) ? Math.round(it.t) : Date.now(), family, device, email, String(it.kind || '?').slice(0, 40), String(it.msg || '').slice(0, 400)).run();
+  }
+  return json({ ok: true });
+}
+
 // ---------- cron: every minute
 async function notifyAll(env, ctx, at) {
   await schema(env);
@@ -541,6 +559,7 @@ async function retention(env, now, oldFam, oldSubs) {
   await env.DB.prepare('DELETE FROM families WHERE updated < ? AND id NOT IN (SELECT DISTINCT family FROM photos)').bind(oldFam).run();
   await env.DB.prepare('DELETE FROM messages WHERE t < ? OR family NOT IN (SELECT id FROM families)').bind(oldFam).run();
   await env.DB.prepare('DELETE FROM photo_gone WHERE t < ?').bind(oldFam).run();
+  await env.DB.prepare('DELETE FROM diag WHERE t < ?').bind(now - 3 * 864e5).run();
   // OwnTracks links: gone after a day without positions (the location track itself is never kept longer than 45 min)
   await env.DB.prepare('DELETE FROM ot WHERE (last < ? AND created < ?) OR family NOT IN (SELECT id FROM families)').bind(Date.now() - 24 * 3600e3, Date.now() - 24 * 3600e3).run();
 }

@@ -369,3 +369,13 @@ No accounts; knowing the family id is the access.
   now. A quiet act re-renders when it brought a changed target/ready/done. "Wij zijn klaar" in a split needs "wie ben jij".
 - Guide: the direction text always matches the arrow; only the buzz/voice cue waits 3 s. Ticket pages without a code
   are kept only between the first and last code page (no cover pages).
+
+## Photos on a phone whose storage hangs (7 Nov, "foto's worden niet bewaard")
+- iOS WebKit can leave `indexedDB.open` unanswered: idb.js now limits an open to 3 s (+ one retry after
+  `indexedDB.databases()`) and a transaction to 8 s, and skips IndexedDB for 30 s after a failed open (`idbDown`).
+  Photos then go the S.mem way (uploaded from memory, toast "kon niet op de gsm bewaard worden").
+- First paint no longer waits for IndexedDB; the album renders the server list before reading local storage; photos
+  added this session upload from an in-memory copy (`fresh`); one unreadable kept photo is skipped, not a stop for all.
+- Diagnostics: `diag(kind, msg)` in app.js (+ idb.js `pp-diag` events, window errors) → POST /api/diag (batched, ≤ 1
+  per kind per minute) → D1 `diag` (t, family, device, email, kind, msg; kept 3 days). Read it with
+  `SELECT * FROM diag ORDER BY t DESC` to see what fails on someone's phone.

@@ -42,6 +42,29 @@ const S = {
 // ---------- people
 const people = () => S.fam?.people || [];
 const meId = () => S.fam?.me?.[device] || null;
+// ---------- diagnostics: problems on this phone (photo uploads, storage, crashes) go to the server (/api/diag), so a
+// failure on someone's phone can be looked at from afar. Small, batched, at most one send per 10 s, same kind ≤ 1/min.
+const diagQ = [], diagSeen = new Map();
+let diagTimer = null;
+function diag(kind, msg) {
+  const now = Date.now(), k = kind + String(msg).slice(0, 60);
+  if (now - (diagSeen.get(k) || 0) < 60e3) return;
+  diagSeen.set(k, now);
+  diagQ.push({ t: now, kind, msg: `${String(msg).slice(0, 300)} · ${navigator.userAgent.match(/(iPhone OS [\d_]+|Android [\d.]+|Version\/[\d.]+|Chrome\/\d+)/g)?.join(' ') || ''}${navigator.standalone ? ' · app' : ''}` });
+  if (diagQ.length > 40) diagQ.splice(0, diagQ.length - 40);
+  diagTimer ??= setTimeout(sendDiag, 10e3);
+}
+async function sendDiag() {
+  diagTimer = null;
+  if (!diagQ.length) return;
+  const items = diagQ.splice(0, 20);
+  try { await fetch('/api/diag', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ family: S.famId, device, items }), redirect: 'manual' }); }
+  catch { diagQ.unshift(...items); }
+  if (diagQ.length) diagTimer = setTimeout(sendDiag, 30e3);
+}
+addEventListener('pp-diag', (e) => diag(e.detail.kind, e.detail.msg));
+addEventListener('error', (e) => diag('js-error', `${e.message} @ ${String(e.filename).split('/').pop()}:${e.lineno}`));
+addEventListener('unhandledrejection', (e) => diag('js-reject', `${e.reason?.name || ''} ${e.reason?.message || e.reason}`));
 // people other phones chose. Nothing claimed yet → the first adult is preselected; otherwise nobody (a second phone may be
 // the partner's, or the same person's home-screen app: they must pick) and claimed names say so
 const claimed = () => new Set(Object.entries(S.fam?.me || {}).filter(([d]) => d !== device).map(([, p]) => p));
@@ -1884,7 +1907,8 @@ async function loadAlbum() {
   try {
     S.album = await api(`/api/photos/${S.famId}`, { timeout: 15000 }); S.albumOff = false;
     cached.save('album', S.album);
-  } catch (e) { if (e.status === 503) S.albumOff = true; }
+  } catch (e) { if (e.status === 503) S.albumOff = true; diag('album-load', `${e.status || ''} ${e.error || e.message || ''} offline=${!!e.offline}`); }
+  if (S.tab === 'album') renderAlbum(); // the family's photos first, without waiting for this phone's storage
   await refreshUploads();
 }
 async function refreshUploads() {
@@ -1937,6 +1961,7 @@ async function loadKeep() {
   for (const [id, url] of keepUrls) if (!S.keep.has(id)) { URL.revokeObjectURL(url); keepUrls.delete(id); }
   for (const k of all) if (!keepUrls.has(k.id) && (k.thumb || k.file)) keepUrls.set(k.id, URL.createObjectURL(k.thumb || k.file));
 }
+const fresh = new Map(); // photos added since the app opened: id → { file, thumb }
 async function addPhotos(files, fromCamera, caption = '') {
   const live = S.gps && !S.sim ? S.gps : null;
   let n = 0, memN = 0;
@@ -1949,7 +1974,9 @@ async function addPhotos(files, fromCamera, caption = '') {
     const id = rnd(16);
     // the kept copy first; the queue then only refers to it (one copy of the original on the phone).
     // From the gallery it's already in the phone's Photos app (saved: 1); from the camera it isn't.
+    fresh.set(id, { id, file, thumb, meta }); // uploads use this copy while the app stays open (no storage read needed)
     const kept = await idb.put('keep', { id, file, thumb, meta, up: 0, saved: fromCamera ? 0 : 1 });
+    if (!kept) diag('keep-write', `${id} ${file.type} ${mb(file.size)}`);
     const queued = kept ? await idb.put('uploads', { id, ref: 1, meta, stage: 'thumb', size: file.size })
       : await idb.put('uploads', { id, file, thumb, meta, stage: 'thumb' }); // no room for both: at least the queue
     if (!queued && !kept) {
@@ -1968,8 +1995,15 @@ let uploading = false, uploadAgain = false;
 const takeAlbumItem = (p) => { S.album = [...S.album.filter((x) => x.id !== p.id), p].sort((a, b) => a.t - b.t); cached.save('album', S.album); };
 const goneIds = new Set(); // deleted on purpose on this phone: an upload in flight must not bring them back
 async function postPhoto(u, fd, ms) {
-  try { return await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual', signal: timeoutSignal(ms) }); }
-  catch { return null; } // no signal or too slow: try again later
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual', signal: timeoutSignal(ms) });
+    if (!r.ok) diag('up-http', `${u.id} ${fd.has('full') ? 'full' : 'thumb'}: ${r.status} ${r.type} ${(await r.clone().text().catch(() => '')).slice(0, 120)}`);
+    return r;
+  } catch (e) { // no signal or too slow: try again later
+    diag('up-fail', `${u.id} ${fd.has('full') ? 'full' : 'thumb'} after ${Math.round((Date.now() - t0) / 1000)} s: ${e?.name} ${e?.message} · online=${navigator.onLine}`);
+    return null;
+  }
 }
 // a kept photo that isn't online and isn't queued (a failed queue write, an old app version): queue it again
 async function requeueKept() {
@@ -1999,7 +2033,8 @@ async function processUploads() {
     for (const u of q) {
       let k;
       if (!u.ref) k = u;
-      else { try { k = S.keep.get(u.id) || await idb.get('keep', u.id); } catch { break; } } // IndexedDB hiccup: later
+      // a kept photo that can't be read now is skipped (and reported): one bad entry must never block all the others
+      else { try { k = fresh.get(u.id) || S.keep.get(u.id) || await idb.get('keep', u.id); } catch (e) { diag('up-read', `${u.id}: ${e?.name} ${e?.message}`); continue; } }
       if (!k?.file) { if (k === undefined) await idb.del('uploads', u.id); continue; } // its kept copy was deleted on purpose
       items.push({ u, k });
     }
@@ -2720,10 +2755,11 @@ async function afterFamily() {
   S.outbox = store.get('outbox', []);
   { const m = store.get('inflight', null); const list = (m?.aid ? [m] : Object.values(m || {})).filter((f) => f?.aid && !S.outbox.some((x) => x.aid === f.aid)).sort((a, b) => a.at - b.at);
     if (list.length) { S.outbox.unshift(...list); store.set('outbox', S.outbox); } store.set('inflight', null); } // the server de-dupes by aid
+  applyTheme();
+  render(); // first paint never waits for the phone's storage (iOS can leave IndexedDB hanging)
   S.tickets = (await idb.all('tickets')) || [];
   await loadKeep();
   navigator.storage?.persist?.().catch(() => {});
-  applyTheme();
   render();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', (e) => {
