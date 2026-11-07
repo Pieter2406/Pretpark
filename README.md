@@ -13,7 +13,7 @@ Alleen Pieter, Marjan en Vincent kunnen de app openen: vul je e-mailadres in en 
 1. Open de link en kies **wie je bent**. Pas bij **Gezin** de namen en lengtes aan.
 2. Deel de gezinslink (Gezin → Delen) met de andere gsm. Dan zien jullie hetzelfde plan.
 3. Tik op **Doen! Breng me erheen**, volg de pijl en tik op **Gedaan** als jullie klaar zijn.
-4. **Tickets**: voeg de e-tickets toe (PDF uit de mail of screenshot). Aan de ingang: *Toon aan de ingang* en swipe van ticket naar ticket. **🅿️ Parkeerticket** (€13 per auto): koop het via *Koop bij Walibi* (je betaalt op de site van Walibi), voeg het toe en kies *🚗 Parking*; het staat dan vooraan, ook zonder bereik.
+4. **Tickets**: voeg de e-tickets toe (PDF uit de mail of screenshot). Aan de ingang: *Toon aan de ingang* en swipe van ticket naar ticket. **🅿️ Parkeerticket** (€13 per auto): te koop aan de kassa’s bij de ingang (online verkoopt Walibi het nu niet). Krijg je een ticket met een code, voeg er een foto van toe en kies *🚗 Parking*; het staat dan vooraan, ook zonder bereik.
 5. **🚗 Auto**: bewaar waar je parkeert; ’s avonds brengt de pijl je terug. **🆘 Kind kwijt?**: neem ’s morgens een foto van de kinderen. Heeft een kind een eigen gsm, vul dan het nummer in bij Gezin: dan bel of sms je het met één tik.
 
 6. **⏳ In de rij**: tik *In de rij* en het Nu-scherm telt af. Speel *Raad de wachttijd* (wie het dichtst zit wint), doe een 🎃 *Foto-opdracht*, lees weetjes en speel de 🧠 *quiz* (punten de hele dag), en stuur bij het splitsen een 📣 *Seintje* naar de anderen. Tik *We zijn aan de beurt!*. Na *Gedaan* kiest iedereen 😍 🙂 of 😬: het plan houdt er rekening mee.

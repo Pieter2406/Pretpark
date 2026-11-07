@@ -142,12 +142,14 @@ No accounts; knowing the family id is the access.
 - `localTime` in /api/live is Brussels wall-clock written as UTC so `getHours()` works inside the Worker.
 
 ## Parking ticket
-- The app sells nothing itself: `PARKING_URL` in app.js links to Walibi's own shop (reservation.walibi.be addon
-  `WBETOCS2025PARKING`, €13 per car in 2026; also at the park's ticket booths). Check the link/price each season.
+- €13 per car (walibi.be/nl/faq). Walibi's online shop doesn't sell it: on 7 Nov 2026 the FAQ's own link
+  (reservation.walibi.be/addons/WBETOCS2025PARKING) redirected to the add-on list, which had no parking product (only
+  haunted houses, Speedy, NMBS, Winter). So the app links to no shop; it says "te koop aan de kassa's bij de ingang".
+  If Walibi sells it online again, check that the link really opens a parking product before adding a button.
 - A ticket with `person: 'car'` is the parking ticket (select "🚗 Parking", or auto-detected on import when the file
   name or code says parking/parkeer/stationnement). It sorts first in the viewer and shows "🚗 Parkeerticket".
-- `parkingCard()` shows "buy" or "staat klaar · Toon" on the Tickets tab, in the car sheet and on Nu until 30 min
-  after opening.
+- `parkingCard()` shows the price + booths (compact on Nu and in the car sheet, with "＋ Ticket" → Tickets tab) or
+  "staat klaar · Toon"; on Nu only until 30 min after opening.
 
 ## In the queue (rij-modus)
 - "⏳ In de rij" sends `queue` {part, wait}: `target.q[part] = { t, w: posted wait, g: guesses }` (a split has two queues;

@@ -1211,15 +1211,15 @@ function stickerSheet() {
     <button data-go="sheetclose" style="width:100%;margin-top:10px">Sluiten</button>`);
 }
 
-// ---------- parking ticket: bought in Walibi's own online shop (the app takes no payments), then imported as a ticket
-// marked 🚗 Parking, so it's shown at the barrier like the entry tickets (also offline). Link from walibi.be/nl/faq.
-const PARKING_URL = 'https://reservation.walibi.be/addons/WBETOCS2025PARKING/?locale=nl-NL';
+// ---------- parking ticket: €13 per car (walibi.be/nl/faq). Walibi's online shop doesn't sell it (Nov 2026: its own
+// FAQ link WBETOCS2025PARKING redirects to an add-on list without parking), so the app points to the ticket booths at
+// the entrance and lets you add the parking ticket you got, marked 🚗 Parking, to show it at the barrier (also offline).
 const parkingTicketIndex = () => shownTickets().findIndex((t) => t.person === 'car');
 function parkingCard(compact) {
   const i = parkingTicketIndex();
   if (i >= 0) return `<div class="pcard ok"><span class="pico" aria-hidden="true">🅿️</span><span><b>Parkeerticket staat klaar</b><br><span class="small muted">Toon het aan de slagboom.</span></span><button class="primary" data-tview="${i}">Toon</button></div>`;
-  return `<div class="pcard${compact ? '' : ' wide'}"><span class="pico" aria-hidden="true">🅿️</span><span><b>${compact ? 'Parking: €13' : 'Parkeerticket: €13 per auto'}</b>${compact ? '' : '<br><span class="small muted">Koop het online bij Walibi (je betaalt op hun site), of aan de kassa bij de ingang. Voeg daarna het ticket hier toe en kies <b>🚗 Parking</b>.</span>'}</span>
-    <a class="btn primary" href="${PARKING_URL}" target="_blank" rel="noopener noreferrer">Koop bij Walibi ↗</a></div>`;
+  if (compact) return `<div class="pcard"><span class="pico" aria-hidden="true">🅿️</span><span><b>Parking: €13 per auto</b><br><span class="small muted">Betalen aan de kassa’s bij de ingang.</span></span><button data-tab="tickets">＋ Ticket</button></div>`;
+  return `<div class="pcard wide"><span class="pico" aria-hidden="true">🅿️</span><span><b>Parkeerticket: €13 per auto</b><br><span class="small muted">Te koop aan de kassa’s bij de ingang van het park (online verkoopt Walibi het nu niet). Krijg je een ticket met een code? Neem er een foto van, voeg die hieronder toe en kies <b>🚗 Parking</b>: dan staat het klaar voor de slagboom.</span></span></div>`;
 }
 
 // ---------- tickets (IndexedDB on the phone + shared via the server)
