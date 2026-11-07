@@ -119,6 +119,8 @@ function schema(env) {
     // OwnTracks: one secret token per phone; tracker = activity.js state (≤ 45 min of cleaned positions); info = last fix
     env.DB.prepare('CREATE TABLE IF NOT EXISTS ot (token TEXT PRIMARY KEY, family TEXT NOT NULL, device TEXT NOT NULL, tracker TEXT NOT NULL, info TEXT NOT NULL, last INTEGER NOT NULL, created INTEGER NOT NULL)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS ot_device ON ot (family, device)'),
+    // photos deleted on purpose: a late upload of the same id (the other phone, a retry) is refused with 410
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS photo_gone (id TEXT PRIMARY KEY, family TEXT NOT NULL, t INTEGER NOT NULL)'),
   ]).catch((err) => { ready = null; throw err; });
   return ready;
 }
@@ -420,13 +422,16 @@ async function photos(request, env, email, fam, id, what) {
     return json(results.map((r) => ({ id: r.id, t: r.t, ...JSON.parse(r.meta) })));
   }
   if (request.method === 'GET') {
-    // the original may still be on its way (the phone sent the small version first): show the small one meanwhile
-    const obj = (await env.PHOTOS.get(`${fam}/${id}${what === 'thumb' ? '.t' : ''}`)) || (what !== 'thumb' ? await env.PHOTOS.get(`${fam}/${id}.t`) : null);
+    // the original may still be on its way (the phone sent the small version first): show the small one meanwhile,
+    // never cached (so the original replaces it) and marked, so the app doesn't share or save it as the original
+    let obj = await env.PHOTOS.get(`${fam}/${id}${what === 'thumb' ? '.t' : ''}`), stand = false;
+    if (!obj && what !== 'thumb') { obj = await env.PHOTOS.get(`${fam}/${id}.t`); stand = !!obj; }
     if (!obj) throw fail(404, 'no photo');
     const h = new Headers();
     obj.writeHttpMetadata(h);
     h.set('etag', obj.httpEtag);
-    h.set('cache-control', 'private, max-age=31536000, immutable');
+    h.set('cache-control', stand ? 'no-store' : 'private, max-age=31536000, immutable');
+    if (stand) h.set('x-pretpark-small', '1');
     h.set('x-content-type-options', 'nosniff');
     const url = new URL(request.url);
     if (url.searchParams.get('dl')) {
@@ -436,8 +441,13 @@ async function photos(request, env, email, fam, id, what) {
     return new Response(obj.body, { headers: h });
   }
   if (request.method === 'DELETE' && id) {
+    const other = await env.DB.prepare('SELECT family FROM photos WHERE id = ?').bind(id).first();
+    if (other && other.family !== fam) throw fail(404, 'no photo');
     await env.PHOTOS.delete([`${fam}/${id}`, `${fam}/${id}.t`]);
-    await env.DB.prepare('DELETE FROM photos WHERE family = ? AND id = ?').bind(fam, id).run();
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM photos WHERE family = ? AND id = ?').bind(fam, id),
+      env.DB.prepare('INSERT OR REPLACE INTO photo_gone (id, family, t) VALUES (?, ?, ?)').bind(id, fam, Date.now()),
+    ]);
     return json({ ok: true });
   }
   if (request.method === 'PATCH' && id) {
@@ -459,6 +469,7 @@ async function photos(request, env, email, fam, id, what) {
   let m = {}; try { m = JSON.parse(form.get('meta') || '{}'); } catch { /* defaults */ }
   const prev = await env.DB.prepare('SELECT family, meta FROM photos WHERE id = ?').bind(id).first();
   if (prev && prev.family !== fam) throw fail(409, 'id taken'); // never replace another family's photo
+  if (await env.DB.prepare('SELECT 1 FROM photo_gone WHERE id = ? AND family = ?').bind(id, fam).first()) throw fail(410, 'deleted');
   if (m.thumbOnly === true && !(full instanceof File)) {
     if (!(thumb instanceof File) || thumb.size === 0 || thumb.size >= 2e6) throw fail(400, 'bad photo');
     const old = prev ? JSON.parse(prev.meta) : null;
@@ -469,8 +480,12 @@ async function photos(request, env, email, fam, id, what) {
       w: Math.round(+m.w) || null, h: Math.round(+m.h) || null,
       lat: Number.isFinite(+m.lat) && m.lat !== null ? +m.lat : null, lon: Number.isFinite(+m.lon) && m.lon !== null ? +m.lon : null,
       near: String(m.near ?? '').slice(0, 60), caption: String(old?.caption || m.caption || '').slice(0, 200), star: !!old?.star };
-    await env.DB.prepare('INSERT OR REPLACE INTO photos (id, family, meta, t, created) VALUES (?, ?, ?, ?, ?)').bind(id, fam, JSON.stringify(meta0), t0, Date.now()).run();
-    return json({ ok: true, id, t: t0, ...meta0 }, 201);
+    // insert, or update only while the original isn't there: a slow small-version request that finishes after the
+    // original never downgrades it
+    await env.DB.prepare(`INSERT INTO photos (id, family, meta, t, created) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET meta = excluded.meta, t = excluded.t WHERE json_extract(photos.meta, '$.full') = 0`).bind(id, fam, JSON.stringify(meta0), t0, Date.now()).run();
+    const now0 = await env.DB.prepare('SELECT meta, t FROM photos WHERE id = ?').bind(id).first();
+    return json({ ok: true, id, t: now0?.t ?? t0, ...(now0 ? JSON.parse(now0.meta) : meta0) }, 201);
   }
   if (!(full instanceof File) || full.size === 0 || full.size > MAX_PHOTO) throw fail(400, 'bad photo');
   // not an image (or an SVG, which could run script on this origin): refused. No type (multipart sends a typeless
@@ -511,6 +526,7 @@ async function notifyAll(env, ctx) {
   // a family with photos stays (the album and the day's log belong together); photos are never deleted here
   await env.DB.prepare('DELETE FROM families WHERE updated < ? AND id NOT IN (SELECT DISTINCT family FROM photos)').bind(oldFam).run();
   await env.DB.prepare('DELETE FROM messages WHERE t < ? OR family NOT IN (SELECT id FROM families)').bind(oldFam).run();
+  await env.DB.prepare('DELETE FROM photo_gone WHERE t < ?').bind(oldFam).run();
   // OwnTracks links: gone after a day without positions (the location track itself is never kept longer than 45 min)
   await env.DB.prepare('DELETE FROM ot WHERE (last < ? AND created < ?) OR family NOT IN (SELECT id FROM families)').bind(Date.now() - 24 * 3600e3, Date.now() - 24 * 3600e3).run();
   if (!env.VAPID_PRIVATE_JWK) return;

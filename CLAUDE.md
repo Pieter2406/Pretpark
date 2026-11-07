@@ -278,3 +278,22 @@ No accounts; knowing the family id is the access.
 - Banner "Geen locatie van X sinds …" when another person's OwnTracks is linked and their newest position (any device)
   is > 30 min old during opening hours, not within 45 min of a meal/pause; dismissable per silence (`loc:<pid>:<t>`).
 - A status-only OwnTracks post updates `info.contact/types` with one `json_set` (never overwrites a newer location).
+
+## Photos: nothing gets lost (7 Nov)
+- Photos taken in Pretpark don't reach the phone's own Photos app, so every album photo taken/added on a phone is kept in
+  IndexedDB `keep` ({id, file, thumb, meta, up, saved, refused}; idb.js **version 3** — never roll the version back,
+  older code would get VersionError) and stays there after the upload. The `uploads` queue refers to it (`ref: 1`);
+  old v2 queue items ({id, file, thumb, meta}) still upload and are then kept too. Deleting on purpose removes it from
+  keep, queue and server; the server remembers deleted ids (`photo_gone`, 30 days) and answers 410 to a late upload.
+- Upload = two phases per round: all small versions first (`meta.thumbOnly`: thumb + details → in the shared album at
+  once, `full: false`; the server's GET `/full` serves the thumb meanwhile with `no-store` + `x-pretpark-small`), then
+  the originals (timeout 60 s + size at 30 kB/s, ≤ 15 min). A thumbOnly that arrives after the original never
+  downgrades it (conditional upsert). `processUploads` re-runs when called while busy, resumes on `visibilitychange`,
+  re-queues kept photos that are neither online nor queued (`requeueKept`), never drops a queue entry unless the photo
+  is safely in keep, and treats an IndexedDB read error as "later" (idb.get throws), not as "deleted".
+- If the browser refuses to store the photo (private browsing, full disk) it lives in `S.mem`, uploads at once, a
+  toast says to keep Pretpark open, and `beforeunload` asks before leaving (doesn't fire on iOS).
+- Album: "📱 n staan op deze gsm", status lines ("⏳ origineel volgt (7,7 MB): houd Pretpark even open", "Wacht op
+  bereik"), photos only on this phone (refused by the server) are shown too. "💾 Bewaar … ook in je Foto's-app" shares
+  unsaved camera photos via the share sheet (≤ 10 photos / 40 MB per tap; from the gallery = already saved). The viewer
+  shows the local original (fallback to the thumb if the browser can't show it, e.g. HEIC on Android).

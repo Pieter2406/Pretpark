@@ -1731,6 +1731,11 @@ async function refreshUploads() {
     if (!local && !thumbUrls.has(u.id) && (u.thumb || u.file)) thumbUrls.set(u.id, URL.createObjectURL(u.thumb || u.file));
     return { id: u.id, t: u.meta.t, near: u.meta.near, caption: u.meta.caption || '', pending: true, src: local || thumbUrls.get(u.id) };
   });
+  // kept on this phone but neither online nor queued (the server refused it): still in the album, marked
+  for (const k of S.keep.values()) {
+    if (ids.has(k.id) || S.album.some((a) => a.id === k.id)) continue;
+    S.uploads.push({ id: k.id, t: k.meta.t, near: k.meta.near, caption: k.meta.caption || '', pending: true, onlyHere: k.refused || 'wacht', src: keepUrls.get(k.id) });
+  }
   if (S.tab === 'album') renderAlbum();
 }
 function nearest(here) {
@@ -1790,57 +1795,96 @@ async function addPhotos(files, fromCamera, caption = '') {
   await refreshUploads();
   processUploads();
 }
-let uploading = false;
+let uploading = false, uploadAgain = false;
 const takeAlbumItem = (p) => { S.album = [...S.album.filter((x) => x.id !== p.id), p].sort((a, b) => a.t - b.t); cached.save('album', S.album); };
+const goneIds = new Set(); // deleted on purpose on this phone: an upload in flight must not bring them back
 async function postPhoto(u, fd, ms) {
   try { return await fetch(`/api/photos/${S.famId}/${u.id}`, { method: 'POST', body: fd, redirect: 'manual', signal: timeoutSignal(ms) }); }
   catch { return null; } // no signal or too slow: try again later
 }
+// a kept photo that isn't online and isn't queued (a failed queue write, an old app version): queue it again
+async function requeueKept() {
+  const q = await idb.all('uploads'); if (!q) return;
+  const queued = new Set(q.map((u) => u.id));
+  for (const k of S.keep.values()) {
+    if (k.up || k.refused || queued.has(k.id) || goneIds.has(k.id) || S.album.some((a) => a.id === k.id && a.full !== false)) continue;
+    await idb.put('uploads', { id: k.id, ref: 1, meta: k.meta, stage: S.album.some((a) => a.id === k.id) ? 'full' : 'thumb', size: k.file?.size || 0 });
+  }
+}
+// The server won't take it ('bad photo', 'photo too big', or deleted on another phone: 410): off the queue, but the
+// photo stays on this phone (marked, so it isn't queued again)
+async function dropFromQueue(u, k, why) {
+  if (u.mem) { S.mem = S.mem.filter((x) => x.id !== u.id); return; }
+  const cur = await idb.get('keep', u.id).catch(() => k);
+  const kept = await idb.put('keep', { ...(cur || { id: u.id, file: k.file, thumb: k.thumb, meta: u.meta, saved: 0 }), up: 0, refused: why });
+  if (kept) await idb.del('uploads', u.id); // never drop the queue entry when the photo isn't safe elsewhere
+}
 async function processUploads() {
-  if (uploading || !S.famId) return;
+  if (!S.famId) return;
+  if (uploading) { uploadAgain = true; return; } // new photos while an upload runs: another round right after
   uploading = true;
   try {
-    const q = [...((await idb.all('uploads')) || []), ...S.mem].sort((a, b) => a.meta.t - b.meta.t);
-    let i = 0;
+    await requeueKept();
+    const q = [...((await idb.all('uploads')) || []), ...S.mem].filter((u) => !goneIds.has(u.id)).sort((a, b) => a.meta.t - b.meta.t);
+    const items = [];
     for (const u of q) {
+      let k;
+      if (!u.ref) k = u;
+      else { try { k = S.keep.get(u.id) || await idb.get('keep', u.id); } catch { break; } } // IndexedDB hiccup: later
+      if (!k?.file) { if (k === undefined) await idb.del('uploads', u.id); continue; } // its kept copy was deleted on purpose
+      items.push({ u, k });
+    }
+    const fail = (res) => {
+      if (!res) { S.offline = true; return true; }
+      if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); return true; }
+      if (res.status === 503) { S.albumOff = true; return true; }
+      return false;
+    };
+    // 1. every small version first (+ details): all new photos are in the shared album within seconds
+    let i = 0, stop = false;
+    for (const { u, k } of items) {
       i++;
-      const k = u.ref ? (S.keep.get(u.id) || await idb.get('keep', u.id)) : u;
-      if (!k?.file) { await idb.del('uploads', u.id); continue; } // its kept copy was deleted on purpose
+      if ((u.stage || 'thumb') !== 'thumb' || !k.thumb) continue;
+      S.upMsg = `Delen ${i} van ${items.length}…`; if (S.tab === 'album') renderAlbum();
+      const fd = new FormData();
+      fd.append('thumb', k.thumb, 'thumb.jpg');
+      fd.append('meta', JSON.stringify({ ...u.meta, thumbOnly: true, size: k.file.size }));
+      const res = await postPhoto(u, fd, 60e3);
+      if (fail(res)) { stop = true; break; }
+      if (goneIds.has(u.id)) continue;
+      if (res.ok) { takeAlbumItem(await res.json()); u.stage = 'full'; if (!u.mem) await idb.put('uploads', u); }
+      else if (res.status === 410) { await dropFromQueue(u, k, 'deleted'); u.dropped = true; }
+      else if (res.status === 400 && (await res.json().catch(() => ({}))).error === 'bad photo') u.stage = 'full'; // an old server: send the original
+      else { stop = true; break; }
+    }
+    // 2. the originals: time for their size on a slow park network (≥ 30 kB/s), up to 15 min each
+    i = 0;
+    for (const { u, k } of stop ? [] : items) {
+      i++;
+      if (u.dropped || goneIds.has(u.id)) continue;
       const size = k.file.size;
-      // 1. the small version (+ details): the photo is in the shared album within seconds
-      if ((u.stage || 'thumb') === 'thumb' && k.thumb) {
-        S.upMsg = `Delen ${i} van ${q.length}…`; if (S.tab === 'album') renderAlbum();
-        const fd = new FormData();
-        fd.append('thumb', k.thumb, 'thumb.jpg');
-        fd.append('meta', JSON.stringify({ ...u.meta, thumbOnly: true, size }));
-        const res = await postPhoto(u, fd, 60e3);
-        if (!res) { S.offline = true; break; }
-        if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); break; }
-        if (res.status === 503) { S.albumOff = true; break; }
-        if (res.ok) { takeAlbumItem(await res.json()); u.stage = 'full'; if (!u.mem) await idb.put('uploads', u); }
-        else if (res.status === 400) { u.stage = 'full'; } // an old server: straight to the original
-        else break;
-      }
-      // 2. the original: allow time for its size on a slow park network (≥ 30 kB/s), up to 15 min
-      S.upMsg = `Origineel ${i} van ${q.length} (${mb(size)})…`; if (S.tab === 'album') renderAlbum();
+      S.upMsg = `Origineel ${i} van ${items.length} (${mb(size)})…`; if (S.tab === 'album') renderAlbum();
       const fd = new FormData();
       fd.append('full', k.file, k.file.name || `${u.id}.jpg`);
       if (k.thumb) fd.append('thumb', k.thumb, 'thumb.jpg');
       fd.append('meta', JSON.stringify(u.meta));
       const res = await postPhoto(u, fd, Math.min(15 * 60e3, 60e3 + size / 30));
-      if (!res) { S.offline = true; break; }
-      if (res.type === 'opaqueredirect' || res.status === 401) { S.auth = true; renderBanners(); break; }
-      if (res.status === 503) { S.albumOff = true; break; }
+      if (fail(res)) break;
+      if (goneIds.has(u.id)) continue; // deleted while it was uploading: the delete removes it from the server
       if (res.ok) {
         takeAlbumItem(await res.json());
         if (u.mem) S.mem = S.mem.filter((x) => x.id !== u.id);
-        else { await idb.put('keep', { ...k, id: u.id, meta: u.meta, up: 1, saved: k.saved ?? 0 }); await idb.del('uploads', u.id); } // stays on the phone
+        else {
+          let cur; try { cur = await idb.get('keep', u.id); } catch { cur = null; }
+          // stays on the phone (re-read first: "saved" may have changed meanwhile)
+          const ok = await idb.put('keep', { ...(cur || { id: u.id, file: k.file, thumb: k.thumb, meta: u.meta, saved: 0 }), up: 1 });
+          if (ok) await idb.del('uploads', u.id);
+        }
       } else {
-        const err = (await res.json().catch(() => ({}))).error;
-        // unusable for the server: leave the queue, but the photo itself stays on this phone
-        if (err === 'bad photo' || err === 'photo too big') {
-          if (!u.ref) await idb.put('keep', { id: u.id, file: k.file, thumb: k.thumb, meta: u.meta, up: 0, saved: 0 });
-          await idb.del('uploads', u.id); toast('Eén foto kon niet online, ze blijft wel op deze gsm');
+        const err = res.status === 410 ? 'deleted' : (await res.json().catch(() => ({}))).error;
+        if (err === 'bad photo' || err === 'photo too big' || err === 'deleted') {
+          await dropFromQueue(u, k, err);
+          if (err !== 'deleted') toast('Eén foto kon niet online, ze blijft wel op deze gsm');
         } else break;
       }
     }
@@ -1848,6 +1892,7 @@ async function processUploads() {
     uploading = false; S.upMsg = '';
     await loadKeep();
     await refreshUploads();
+    if (uploadAgain) { uploadAgain = false; setTimeout(processUploads, 0); }
   }
 }
 // shared photos (with this phone's own thumbnail when it has the photo: also offline) + not-yet-shared ones;
@@ -1887,17 +1932,17 @@ function drawPhoto() {
   const items = albumItems(); const it = items[pv.i]; if (!it) return closePhoto();
   const when = new Date(it.t).toLocaleString('nl-BE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
   $('#pview').innerHTML = `<div class="pv-top"><span>${pv.i + 1} / ${items.length}</span><button data-go="pvclose" aria-label="Sluiten">✕</button></div>
-    <div class="pv-img"><img src="${esc(localFull(it.id) || (it.pending ? it.src : photoUrl(it.id)))}" alt="" style="background-image:url('${esc(it.src || '')}')"></div>
-    <div class="pv-info"><b>${when}</b>${it.near ? ` · 📍 ${esc(it.near)}` : ''}${it.by ? ` · 📷 ${esc(byName(it.by))}` : ''}${it.pending ? ' · ⏳ nog niet gedeeld, staat veilig op deze gsm' : it.origWait ? ` · ⏳ origineel volgt${S.queue.get(it.id)?.size ? ` (${mb(S.queue.get(it.id).size)})` : ''}: houd Pretpark even open` : ''}${it.local ? ' · 📱 op deze gsm' : ''}</div>
+    <div class="pv-img"><img src="${esc(localFull(it.id) || (it.pending ? it.src : photoUrl(it.id)))}" alt="" data-fb="${esc(it.src || '')}" onerror="this.onerror=null;if(this.dataset.fb)this.src=this.dataset.fb" style="background-image:url('${esc(it.src || '')}')"></div>
+    <div class="pv-info"><b>${when}</b>${it.near ? ` · 📍 ${esc(it.near)}` : ''}${it.by ? ` · 📷 ${esc(byName(it.by))}` : ''}${it.onlyHere ? ' · 📱 alleen op deze gsm' : it.pending ? ' · ⏳ nog niet gedeeld, staat veilig op deze gsm' : it.origWait ? ` · ⏳ origineel volgt${S.queue.get(it.id)?.size ? ` (${mb(S.queue.get(it.id).size)})` : ''}: houd Pretpark even open` : it.full === false && !it.local ? ' · ⏳ het origineel komt nog van een andere gsm' : ''}${it.local ? ' · 📱 op deze gsm' : ''}</div>
     ${it.pending ? `<div class="pv-actions">${navigator.canShare ? '<button data-go="pvshare">💾 Bewaar in Foto’s</button>' : ''}<button data-go="pvdel" aria-label="Verwijder">🗑️</button></div>` : `<div class="pv-actions">
       <button data-go="pvstar" aria-pressed="${!!it.star}">${it.star ? '⭐ Favoriet' : '☆ Favoriet'}</button>
-      <a class="btn" href="${esc(photoUrl(it.id))}?dl=1" download>⬇️ Bewaar</a>
-      ${navigator.canShare ? '<button data-go="pvshare">📤 Deel</button>' : ''}
+      ${it.full === false && !it.local ? '' : `<a class="btn" href="${esc(photoUrl(it.id))}?dl=1" download>⬇️ Bewaar</a>
+      ${navigator.canShare ? '<button data-go="pvshare">📤 Deel</button>' : ''}`}
       <button data-go="pvdel" aria-label="Verwijder">🗑️</button></div>`}
     <div class="pv-nav"><button data-go="pvprev" ${pv.i === 0 ? 'disabled' : ''} aria-label="Vorige">‹</button><button data-go="pvnext" ${pv.i === items.length - 1 ? 'disabled' : ''} aria-label="Volgende">›</button></div>`;
   // fetch the original now, so "Deel" can open the share sheet straight from the tap (iOS requires that)
   if (S.keep.get(it.id)?.file) { pv.blob = S.keep.get(it.id).file; pv.blobId = it.id; } // the original on this phone
-  else if (navigator.canShare && !it.pending && pv.blobId !== it.id) {
+  else if (navigator.canShare && !it.pending && it.full !== false && pv.blobId !== it.id) {
     pv.blob = null; pv.blobId = it.id;
     fetch(photoUrl(it.id)).then((r) => r.blob()).then((b) => { if (pv.blobId === it.id) pv.blob = b; }).catch(() => {});
   }
@@ -2304,7 +2349,9 @@ document.addEventListener('click', async (e) => {
     }
     case 'savephotos': {
       // the share sheet → "Bewaar N afbeeldingen" (iOS) / "Opslaan" (Android); 10 at a time, straight from the tap
-      const batch = unsaved().slice(0, 10), files = batch.map(asFile);
+      const batch = []; let total = 0;
+      for (const k of unsaved()) { if (batch.length >= 10 || (batch.length && total + k.file.size > 40e6)) break; batch.push(k); total += k.file.size; }
+      const files = batch.map(asFile);
       if (!files.length) break;
       if (navigator.canShare && !navigator.canShare({ files })) { toast('Deze gsm kan foto’s niet zo bewaren. Open een foto en tik op ⬇️ Bewaar.'); break; }
       navigator.share({ files }).then(async () => {
@@ -2316,13 +2363,13 @@ document.addEventListener('click', async (e) => {
     case 'pvdel': {
       const it = albumItems()[pv.i]; if (!it) break;
       deleteLater(it.id, 'Foto', async () => {
+        goneIds.add(it.id);
         // deleting on purpose removes it everywhere: the shared album, the queue and the copy on this phone
         await idb.del('uploads', it.id); await idb.del('keep', it.id);
         S.mem = S.mem.filter((x) => x.id !== it.id);
-        if (!it.pending) {
-          try { await api(`/api/photos/${S.famId}/${it.id}`, { method: 'DELETE' }); S.album = S.album.filter((x) => x.id !== it.id); cached.save('album', S.album); }
-          catch { toast('Verwijderen lukte niet'); }
-        }
+        // always (also for a photo that seemed not uploaded: it may have gone up during the 5-s undo)
+        try { await api(`/api/photos/${S.famId}/${it.id}`, { method: 'DELETE' }); S.album = S.album.filter((x) => x.id !== it.id); cached.save('album', S.album); }
+        catch { if (!it.pending) toast('Verwijderen lukte niet'); }
         await loadKeep(); await refreshUploads(); renderAlbum();
       });
       if (!albumItems().length) closePhoto(); else { pv.i = Math.min(pv.i, albumItems().length - 1); drawPhoto(); }

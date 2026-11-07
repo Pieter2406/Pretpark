@@ -33,7 +33,8 @@ async function run(store, mode, fn) {
 }
 export const idb = {
   all: (store) => run(store, 'readonly', (s) => s.getAll()).catch(() => null),
-  get: (store, id) => run(store, 'readonly', (s) => s.get(id)).catch(() => null),
+  // undefined = not there; throws when IndexedDB failed (so a hiccup is never mistaken for "deleted")
+  get: (store, id) => run(store, 'readonly', (s) => s.get(id)),
   put: (store, v) => run(store, 'readwrite', (s) => s.put(v)).then(() => true, () => false),
   del: (store, id) => run(store, 'readwrite', (s) => s.delete(id)).then(() => true, () => false),
 };

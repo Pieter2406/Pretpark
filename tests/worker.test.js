@@ -426,3 +426,23 @@ test('photos: small version first (in the album at once), the original later; st
   assert.equal(r3.status, 200);
   assert.notEqual((await call('GET', `/api/photos/${f.id}`)).data[0].full, false);
 });
+
+test('photos: deleted on purpose → a late upload gets 410; a slow small-version request never downgrades the original', async () => {
+  const f = await newFam();
+  const thumb = new File([Buffer.from('t')], 't.jpg', { type: 'image/jpeg' });
+  const full = () => new File([Buffer.from('fulljpeg')], 'x.jpg', { type: 'image/jpeg' });
+  const small = () => { const fd = new FormData(); fd.append('thumb', thumb); fd.append('meta', JSON.stringify({ thumbOnly: true, size: 9 })); return fd; };
+  const big = () => { const fd = new FormData(); fd.append('full', full()); fd.append('thumb', thumb); fd.append('meta', '{}'); return fd; };
+  assert.equal((await call('POST', `/api/photos/${f.id}/gone00001`, small())).status, 201);
+  assert.equal((await call('DELETE', `/api/photos/${f.id}/gone00001`)).status, 200);
+  assert.equal((await call('POST', `/api/photos/${f.id}/gone00001`, big())).status, 410);
+  assert.equal((await call('GET', `/api/photos/${f.id}`)).data.length, 0);
+  // original first, then a late small-version request: still the original
+  assert.equal((await call('POST', `/api/photos/${f.id}/late00001`, big())).status, 201);
+  const r = await call('POST', `/api/photos/${f.id}/late00001`, small());
+  assert.notEqual(r.data.full, false);
+  // the stand-in is never cached and is marked
+  assert.equal((await call('POST', `/api/photos/${f.id}/stand0001`, small())).status, 201);
+  const g = await worker.fetch(new Request(`http://localhost/api/photos/${f.id}/stand0001/full`), env, ctx);
+  assert.equal(g.headers.get('cache-control'), 'no-store'); assert.equal(g.headers.get('x-pretpark-small'), '1');
+});
