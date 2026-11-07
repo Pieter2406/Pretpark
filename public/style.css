@@ -575,3 +575,13 @@ body.kbd .tabs, body.kbd .fab { display: none; }
 .bstyle.ibilaw b { color: #ff7a1a; }
 .bookprev { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 12px; }
 .bookprev img { width: 100%; border-radius: 6px; box-shadow: var(--shadow); }
+
+/* a photo's place (📍 ✏️ in the viewer) and the picker above the viewer */
+.pv-place { background: rgba(255,255,255,.12); color: inherit; border: 0; border-radius: 14px; padding: 4px 10px; min-height: 32px; font: inherit; }
+.sheet.over { z-index: 62; } #sheetBack.over { z-index: 61; }
+#placeQ { width: 100%; font: inherit; font-size: 16px; min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: inherit; padding: 0 12px; margin: 6px 0 4px; }
+.placelist h3 { margin: 14px 4px 6px; font-size: .95rem; color: var(--muted); }
+.prow { display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; margin: 0 0 6px; min-height: 48px; color: inherit; font: inherit; }
+.prow small { display: block; color: var(--muted); font-size: .8rem; }
+.prow.on { border-color: var(--accent); }
+.prow > span:first-child { font-size: 1.3rem; text-align: center; }

@@ -8,7 +8,7 @@ import { freshTracker, addFix, detect, farState } from './activity.js';
 import { makePark, pathLength, bearingXY } from './route.js';
 import { apply, phoneOf } from './family.js';
 import { showsOn, spookyOn, nextShow, dayKind, ADVICE } from './shows.js';
-import { readExif, exifTime, placeOf } from './exif.js';
+import { readExif, exifTime, placeOf, placesNear, spotLabel } from './exif.js';
 import { idb } from './idb.js';
 import { PHOTOS } from './photos.js';
 
@@ -631,6 +631,70 @@ async function makeBook() {
   B.busy = false;
 }
 async function shareBook() { if (B.pdf) await shareFiles([B.pdf], 'Ons fotoboek'); }
+
+// ---------- a photo's place by hand (viewer › "📍 … ✏️"): suggestions from the photo's own GPS and the rides done around
+// that time, then every attraction, Halloween spot and restaurant, a search box, free text and "geen plek"
+const ymdOf = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+function openPlace(id) {
+  const it = albumItems().find((x) => x.id === id); if (!it) return;
+  S.placeFor = id;
+  const pos = it.lat != null && it.lon != null ? { lat: it.lat, lon: it.lon } : null;
+  const sugg = new Map();
+  for (const x of placesNear(pos, { t: it.t, n: 5 })) sugg.set(x.name, `📡 ${Math.round(x.d)} m van de foto`);
+  const around = (S.fam?.log || []).filter((l) => Math.abs(l.t - it.t) < 45 * 60e3).sort((a, b) => Math.abs(a.t - it.t) - Math.abs(b.t - it.t));
+  for (const l of around) for (const rid of l.ids || []) { const a = byId[rid]; if (a && !sugg.has(a.name)) sugg.set(a.name, `🎢 gedaan om ${hhmm(l.t)}`); }
+  const iconOf = (n) => byId[ATTRACTIONS.find((a) => a.name === n)?.id]?.icon || (FOOD.some((f) => f.name === n) ? '🍽️' : '🎃');
+  const row = (n, why = '') => `<button class="prow ${n === it.near ? 'on' : ''}" data-setplace="${esc(n)}" data-q="${esc(n.toLowerCase())}"><span aria-hidden="true">${iconOf(n)}</span><span>${esc(n)}${why ? `<small>${esc(why)}</small>` : ''}</span>${n === it.near ? '<b aria-hidden="true">✓</b>' : ''}</button>`;
+  const rides = [...ATTRACTIONS].sort((a, b) => a.name.localeCompare(b.name, 'nl'));
+  const spooky = spookyOn(ymdOf(it.t)).map((s) => spotLabel(s));
+  const food = [...FOOD].sort((a, b) => a.name.localeCompare(b.name, 'nl'));
+  openSheet(`<h2>📍 Waar is deze foto?</h2>
+    <p class="small muted">${new Date(it.t).toLocaleString('nl-BE', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}${it.near ? ` · nu: <b>${esc(it.near)}</b>` : ' · nog geen plek'}. Dit geldt voor het hele gezin (album, dagverslag, fotoboek).</p>
+    <input type="search" id="placeQ" placeholder="Zoek of typ een plek…" autocomplete="off" aria-label="Zoek een plek" maxlength="60">
+    <div class="placelist">
+      ${sugg.size ? `<h3>Voorstellen</h3>${[...sugg].slice(0, 8).map(([n, why]) => row(n, why)).join('')}` : ''}
+      <h3>Attracties</h3>${rides.map((a) => row(a.name)).join('')}
+      ${spooky.length ? `<h3>Halloween</h3>${spooky.map((n) => row(n)).join('')}` : ''}
+      <h3>Eten en drinken</h3>${food.map((f) => row(f.name)).join('')}
+    </div>
+    <div class="row2" style="margin-top:10px"><button data-go="placefree">✏️ Gebruik wat ik typte</button><button data-go="placenone">🚫 Geen plek</button></div>`);
+  $('#sheet').classList.add('over'); $('#sheetBack').classList.add('over'); // above the photo viewer
+}
+// save it: the shared album (PATCH), this phone's kept copy and its upload queue; a photo that isn't online yet keeps
+// the choice in pp:placeFix until it is, then it's sent
+async function setPlace(id, near) {
+  near = String(near || '').trim().slice(0, 60);
+  const p = S.album.find((x) => x.id === id);
+  if (p) { p.near = near; p.placed = 'hand'; cached.save('album', S.album); }
+  const k = S.keep.get(id); if (k) { k.meta = { ...k.meta, near }; idb.put('keep', k); }
+  const q = S.queue.get(id); if (q?.meta) { q.meta = { ...q.meta, near }; if (!q.mem) idb.put('uploads', q); }
+  const f = fresh.get(id); if (f) f.meta = { ...f.meta, near };
+  for (const m of S.mem) if (m.id === id) m.meta = { ...m.meta, near };
+  for (const u of S.uploads) if (u.id === id) u.near = near;
+  const fixes = store.get('placeFix', {}); fixes[id] = near; store.set('placeFix', fixes);
+  closeSheet();
+  if (!$('#pview').hidden) drawPhoto();
+  if (S.tab === 'album') renderAlbum();
+  toast(near ? `📍 ${near}` : 'Plek gewist');
+  await sendPlaceFixes();
+}
+async function sendPlaceFixes() {
+  const fixes = store.get('placeFix', {});
+  for (const [id, near] of Object.entries(fixes)) { const p = S.album.find((x) => x.id === id); if (p) p.near = near; } // shown at once, sent below
+  for (const [id, near] of Object.entries(fixes)) {
+    if (!S.album.some((x) => x.id === id)) continue; // not online yet: later
+    try {
+      await api(`/api/photos/${S.famId}/${id}`, { method: 'PATCH', body: { near } });
+      const now = store.get('placeFix', {}); if (now[id] === near) { delete now[id]; store.set('placeFix', now); }
+    } catch (e) { if (e.status === 404) { const now = store.get('placeFix', {}); delete now[id]; store.set('placeFix', now); } else break; }
+  }
+}
+// the album's "aanvullen": the next photo without a place, in the viewer
+function nextWithoutPlace() {
+  const items = albumItems(); const i = items.findIndex((x) => !x.near && !x.pending);
+  if (i < 0) { toast('Alle foto’s hebben een plek 👍'); return; }
+  openPhoto(items[i].id); setTimeout(() => openPlace(items[i].id), 150);
+}
 
 // ---------- history (Nu › 📜 / Gezin): everything recorded today, newest first; a misclick can be deleted
 // (with "Terugzetten") or moved to the right time; a ride that wasn't tapped can be added afterwards
@@ -1460,6 +1524,13 @@ const closers = {
 }
 addEventListener('pagehide', () => store.set('tracker', S.tr));
 document.addEventListener('input', (e) => { if (e.target.closest?.('#peopleForm')) S.famDirty = true; }, true);
+// the place picker's search: only the rows that match (and the group titles above them)
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'placeQ') return;
+  const q = e.target.value.trim().toLowerCase();
+  document.querySelectorAll('#sheet .prow').forEach((r) => { r.hidden = !!q && !r.dataset.q.includes(q); });
+  document.querySelectorAll('#sheet .placelist h3').forEach((h) => { let n = h.nextElementSibling, any = false; while (n && n.tagName !== 'H3') { if (!n.hidden) any = true; n = n.nextElementSibling; } h.hidden = !any; });
+});
 // a photo only in memory (this browser can't store it) would be lost when the page closes: ask first
 addEventListener('beforeunload', (e) => { if (S.mem.length) { e.preventDefault(); e.returnValue = ''; } });
 setInterval(() => { if (S.pocket) renderPocket(); }, 30e3);
@@ -1493,6 +1564,7 @@ function openSheet(html) {
 function closeSheet() {
   const s = $('#sheet'); if (s.hidden) return;
   s.hidden = true; $('#sheetBack').hidden = true; $('#sheetBack').style.opacity = '';
+  s.classList.remove('over'); $('#sheetBack').classList.remove('over');
   s.style.setProperty('--dy', '0px'); s.classList.remove('dragging');
   closeDialog(s);
 }
@@ -2141,6 +2213,7 @@ async function loadAlbum() {
     cached.save('album', S.album);
   } catch (e) { if (e.status === 503) S.albumOff = true; diag('album-load', `${e.status || ''} ${e.error || e.message || ''} offline=${!!e.offline}`); }
   if (S.tab === 'album') renderAlbum(); // the family's photos first, without waiting for this phone's storage
+  sendPlaceFixes();
   await refreshUploads();
 }
 async function refreshUploads() {
@@ -2380,6 +2453,7 @@ function renderAlbum() {
       <label class="filebtn"><input type="file" id="galIn" accept="image/*" multiple hidden><span>🖼️ Uit galerij</span></label>
     </div>
     ${store.get('camLost', 0) ? '<p class="small upwait">💡 Je gsm sloot Pretpark al eens terwijl de camera open stond (die foto kwam niet aan). Veiliger: fotografeer met de camera-app van je gsm en voeg toe met 🖼️ Uit galerij.</p>' : ''}
+    ${items.some((x) => !x.near && !x.pending) ? `<button class="ghost small" data-go="placenext" style="width:100%">📍 ${items.filter((x) => !x.near && !x.pending).length} foto’s zonder plek: aanvullen</button>` : ''}
     <p class="small muted">${items.length} foto’s · 📱 ${S.keep.size} staan op deze gsm${S.queue.size ? ` · ⏳ ${S.queue.size} ${S.queue.size === 1 ? 'gaat' : 'gaan'} nog online` : ''}${S.upMsg ? ` · ${esc(S.upMsg)}` : ''}. Originele kwaliteit, gedeeld met het gezin.</p>
     ${S.queue.size && !S.upMsg ? `<p class="small upwait">⏳ ${S.offline ? 'Wacht op bereik.' : 'Houd Pretpark even open (in de app, scherm aan), dan gaan ze online.'} Ze staan veilig op deze gsm.</p>` : ''}
     ${unsaved().length && navigator.canShare ? `<button class="ghost small" data-go="savephotos" style="width:100%">💾 Bewaar ${Math.min(10, unsaved().length)} ${unsaved().length > 10 ? `van ${unsaved().length} ` : ''}foto’s ook in je Foto’s-app</button>` : ''}
@@ -2401,7 +2475,7 @@ function drawPhoto() {
   const when = new Date(it.t).toLocaleString('nl-BE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
   $('#pview').innerHTML = `<div class="pv-top"><span>${pv.i + 1} / ${items.length}</span><button data-go="pvclose" aria-label="Sluiten">✕</button></div>
     <div class="pv-img"><img src="${esc(localFull(it.id) || (it.pending ? it.src : photoUrl(it.id)))}" alt="" data-fb="${esc(it.src || '')}" onerror="this.onerror=null;if(this.dataset.fb)this.src=this.dataset.fb" style="background-image:url('${esc(it.src || '')}')"></div>
-    <div class="pv-info"><b>${when}</b>${it.near ? ` · 📍 ${esc(it.near)}` : ''}${it.by ? ` · 📷 ${esc(byName(it.by))}` : ''}${it.onlyHere ? ' · 📱 alleen op deze gsm' : it.pending ? ' · ⏳ nog niet gedeeld, staat veilig op deze gsm' : it.origWait ? ` · ⏳ origineel volgt${S.queue.get(it.id)?.size ? ` (${mb(S.queue.get(it.id).size)})` : ''}: houd Pretpark even open` : it.full === false && !it.local ? ' · ⏳ het origineel komt nog van een andere gsm' : ''}${it.local ? ' · 📱 op deze gsm' : ''}</div>
+    <div class="pv-info"><b>${when}</b> · <button class="pv-place" data-go="pvplace" aria-label="Plek van deze foto aanpassen">📍 ${it.near ? esc(it.near) : 'Plek kiezen'} ✏️</button>${it.by ? ` · 📷 ${esc(byName(it.by))}` : ''}${it.onlyHere ? ' · 📱 alleen op deze gsm' : it.pending ? ' · ⏳ nog niet gedeeld, staat veilig op deze gsm' : it.origWait ? ` · ⏳ origineel volgt${S.queue.get(it.id)?.size ? ` (${mb(S.queue.get(it.id).size)})` : ''}: houd Pretpark even open` : it.full === false && !it.local ? ' · ⏳ het origineel komt nog van een andere gsm' : ''}${it.local ? ' · 📱 op deze gsm' : ''}</div>
     ${it.pending ? `<div class="pv-actions">${navigator.canShare ? '<button data-go="pvshare">💾 Bewaar in Foto’s</button>' : ''}<button data-go="pvdel" aria-label="Verwijder">🗑️</button></div>` : `<div class="pv-actions">
       <button data-go="pvstar" aria-pressed="${!!it.star}">${it.star ? '⭐ Favoriet' : '☆ Favoriet'}</button>
       ${it.full === false && !it.local ? '' : `<a class="btn" href="${esc(photoUrl(it.id))}?dl=1" download>⬇️ Bewaar</a>
@@ -2735,6 +2809,7 @@ document.addEventListener('click', async (e) => {
   if (d.fav) { buzz(); await act({ type: 'fav', id: d.fav, on: !(S.fam.favs || []).includes(d.fav) }); if (!$('#sheet').hidden && $('#sheet').querySelector(`[data-goride="${d.fav}"]`)) rideSheet(d.fav); return; }
   if (d.undo) { await act({ type: 'undo', id: d.undo }); return; }
   if (d.showgo) { showGo(d.showgo); return; }
+  if (d.setplace != null && S.placeFor) { await setPlace(S.placeFor, d.setplace); return; }
   if (d.hdel) { await histDelete(JSON.parse(d.hdel)); return; }
   if (d.quizwho) { S.quizWho = d.quizwho; quizSheet(null, true); return; }
   if (d.quizans != null && S.quizQ) {
@@ -2870,6 +2945,10 @@ document.addEventListener('click', async (e) => {
     case 'story': openStory(); break;
     case 'storyclose': closeStory(); break;
     case 'pvclose': closePhoto(); break;
+    case 'pvplace': { const it = albumItems()[pv.i]; if (it) openPlace(it.id); break; }
+    case 'placefree': { const v = $('#placeQ')?.value.trim(); if (v) await setPlace(S.placeFor, v); else toast('Typ eerst een plek'); break; }
+    case 'placenone': await setPlace(S.placeFor, ''); break;
+    case 'placenext': nextWithoutPlace(); break;
     case 'pvprev': pv.i = Math.max(0, pv.i - 1); drawPhoto(); break;
     case 'pvnext': pv.i = Math.min(albumItems().length - 1, pv.i + 1); drawPhoto(); break;
     case 'pvstar': {

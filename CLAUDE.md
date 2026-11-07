@@ -496,3 +496,14 @@ No accounts; knowing the family id is the access.
   now / file date; place = EXIF GPS, else the live fix only when the photo is ≤ 2 min old; lat/lon only kept when the
   photo has a park place. `nearest()` (chat location) uses `placeOf` too. Tests: tests/exif.test.js, scratchpad
   exife2e.js (EXIF photo at Turbine added while standing at Pulsar → Turbine + its own time; Chromium + WebKit).
+
+## A photo's place by hand (7 Nov night)
+- Viewer: the info line has "📍 <place> ✏️" (`pvplace`) → `openPlace(id)`: a sheet above the viewer (`.sheet.over`,
+  z 62) with a search box (`#placeQ`, filters rows and hides empty group titles), "Voorstellen" (`placesNear` from the
+  photo's own GPS with distance, then the rides done within ±45 min of the photo, from fam.log), all attractions A–Z,
+  the day's Halloween spots (`spotLabel`), restaurants, "✏️ Gebruik wat ik typte" (free text ≤ 60) and "🚫 Geen plek".
+- `setPlace(id, near)`: updates the album item, this phone's `keep`/queue/memory copies, remembers it in `pp:placeFix`
+  and `sendPlaceFixes()` PATCHes `{near}` once the photo is online (also re-applied over a freshly loaded album so it
+  doesn't flip back). Server PATCH accepts `near` (control chars stripped, trimmed, ≤ 60) and marks `placed: 'hand'`.
+- Album: "📍 n foto's zonder plek: aanvullen" opens the next one without a place, picker included.
+- Tests: worker.test.js (PATCH near), scratchpad placepick.js (Chromium + WebKit).

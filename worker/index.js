@@ -466,7 +466,9 @@ async function photos(request, env, email, fam, id, what) {
     const row = await env.DB.prepare('SELECT meta FROM photos WHERE family = ? AND id = ?').bind(fam, id).first();
     if (!row) throw fail(404, 'no photo');
     // only the fields sent: one phone starring while the other writes a caption doesn't wipe either change
-    const meta = { ...JSON.parse(row.meta), ...('caption' in body ? { caption: String(body.caption ?? '').slice(0, 200) } : {}), ...('star' in body ? { star: !!body.star } : {}) };
+    const meta = { ...JSON.parse(row.meta), ...('caption' in body ? { caption: String(body.caption ?? '').slice(0, 200) } : {}), ...('star' in body ? { star: !!body.star } : {}),
+      // the place chosen by hand in the viewer (attraction, Halloween spot, restaurant or free text); '' = none
+      ...('near' in body ? { near: String(body.near ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60), placed: 'hand' } : {}) };
     await env.DB.prepare('UPDATE photos SET meta = ? WHERE family = ? AND id = ?').bind(JSON.stringify(meta), fam, id).run();
     return json({ ok: true, meta });
   }

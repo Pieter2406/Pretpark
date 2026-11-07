@@ -62,13 +62,18 @@ export function exifTime(r) {
 }
 
 // Halloween spots with a known place (shows.js) count as places too, but only while they are open (by the photo's time)
-const label = (s) => (s.kind === 'house' ? `${s.name} (spookhuis)` : s.kind === 'zone' ? `${s.name} (scare zone)` : s.name);
+export const spotLabel = (s) => (s.kind === 'house' ? `${s.name} (spookhuis)` : s.kind === 'zone' ? `${s.name} (scare zone)` : s.name);
 const ymd = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 function spotsAt(t) {
   if (!t) return [];
   const m = new Date(t).getHours() * 60 + new Date(t).getMinutes();
   // only spots whose place was measured (`seen`); the others sit on a ride's coordinates and would steal its photos
-  return spookyOn(ymd(t)).filter((s) => s.seen && m >= s.from && m < s.to).map((s) => ({ name: label(s), lat: s.lat, lon: s.lon }));
+  return spookyOn(ymd(t)).filter((s) => s.seen && m >= s.from && m < s.to).map((s) => ({ name: spotLabel(s), lat: s.lat, lon: s.lon }));
+}
+// the places around a position, nearest first (suggestions when a place is chosen by hand)
+export function placesNear(pos, { t = null, n = 5, max = 150 } = {}) {
+  if (!pos || pos.lat == null) return [];
+  return [...ATTRACTIONS, ...spotsAt(t), ...FOOD].map((x) => ({ name: x.name, d: distM(pos, x) })).filter((x) => x.d <= max).sort((a, b) => a.d - b.d).slice(0, n);
 }
 // pos {lat, lon}; t = when the photo was taken (ms, for the Halloween spots)
 export function placeOf(pos, { t = null, max = 90 } = {}) {

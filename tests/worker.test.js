@@ -472,3 +472,17 @@ test('photos: the original as raw bytes (PUT) with a size check; a cut-off body 
   const bad = await worker.fetch(new Request(`http://localhost/api/photos/${f.id}/rawput0002`, { method: 'POST', body: '--x\r\ncut', headers: { 'content-type': 'multipart/form-data; boundary=zzz' } }), env, ctx);
   assert.equal(bad.status, 409);
 });
+
+test('photos: the place can be set by hand (PATCH near), cleaned and capped, star and caption untouched', async () => {
+  const f = await newFam();
+  const fd = new FormData(); fd.append('full', new File([Buffer.from('jpeg')], 'x.jpg', { type: 'image/jpeg' })); fd.append('meta', JSON.stringify({ near: 'Pulsar' }));
+  assert.equal((await call('POST', `/api/photos/${f.id}/placefix01`, fd)).status, 201);
+  await call('PATCH', `/api/photos/${f.id}/placefix01`, { star: true, caption: 'Wauw' });
+  const r = await call('PATCH', `/api/photos/${f.id}/placefix01`, { near: '  Turbine\n' });
+  assert.equal(r.status, 200); assert.equal(r.data.meta.near, 'Turbine'); assert.equal(r.data.meta.placed, 'hand');
+  assert.equal(r.data.meta.star, true); assert.equal(r.data.meta.caption, 'Wauw');
+  assert.equal((await call('PATCH', `/api/photos/${f.id}/placefix01`, { near: 'x'.repeat(200) })).data.meta.near.length, 60);
+  assert.equal((await call('PATCH', `/api/photos/${f.id}/placefix01`, { near: '' })).data.meta.near, '');
+  const list = (await call('GET', `/api/photos/${f.id}`)).data;
+  assert.equal(list[0].near, '');
+});
