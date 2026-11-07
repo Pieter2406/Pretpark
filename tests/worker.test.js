@@ -307,3 +307,56 @@ test('liveRides: placeholder waits (222 everywhere before opening, the same long
   assert.equal(liveRides([ride('a', 181)]).a.w, null);
   assert.equal(liveRides([ride('a', 180)]).a.w, 180);
 });
+
+test('OwnTracks: token per phone, background fixes → queue → done (+ push), junk and revoked tokens are quiet', async () => {
+  const f = await newFam();
+  const dev = 'devot0000001';
+  // this phone is p1; choose a together plan
+  await call('POST', '/api/family/' + f.id, { type: 'me', device: dev, person: 'p1' });
+  const plan = together.find((p) => p.type === 'together');
+  const a = ATTRACTIONS.find((x) => x.id === plan.parts[0].id);
+  const now = Date.now();
+  await call('POST', '/api/family/' + f.id, { type: 'target', plan, device: dev, at: now - 60 * 60e3 });
+  const keys = await subKeys();
+  await call('POST', '/api/push', { device: dev, family: f.id, sub: { endpoint: 'https://fcm.googleapis.com/fcm/send/ot', keys } });
+  assert.equal((await call('GET', `/api/otsetup/${f.id}?device=${dev}`)).data.active, false);
+  const s = await call('POST', `/api/otsetup/${f.id}`, { device: dev });
+  assert.equal(s.status, 201);
+  const token = s.data.token;
+  assert.match(token, /^[a-z0-9]{24}$/);
+  const move = (p, dx, dy) => ({ lat: p.lat + dy / 111194, lon: p.lon + dx / (111194 * Math.cos((p.lat * Math.PI) / 180)) });
+  const loc = (p, t, acc = 8, vel = 0) => ({ _type: 'location', lat: p.lat, lon: p.lon, acc, tst: Math.round(t / 1000), vel, batt: 77, tid: 'PP' });
+  // OwnTracks posts its offline queue as an array: 30 min in the queue at the ride, then walking away
+  const t0 = now - 50 * 60e3;
+  const batch = [];
+  for (let i = 0; i < 30 * 2; i++) batch.push(loc(move(a, (i % 5) - 2, (i % 3) - 1), t0 + i * 30e3));
+  batch.push({ _type: 'transition', event: 'leave' }, { foo: 1 }, 'junk');
+  pushes.length = 0;
+  let r = await call('POST', '/api/ot/' + token, batch);
+  assert.equal(r.status, 200); assert.deepEqual(r.data, []);
+  await settle();
+  let fam = (await call('GET', '/api/family/' + f.id)).data.fam;
+  assert.ok(fam.target?.q?.[0]?.auto, 'queue started by the server');
+  assert.ok(pushes.some((p) => p.url.includes('fcm.googleapis.com/fcm/send/ot')), 'pushed to this phone');
+  const away = [];
+  for (let i = 0; i < 8; i++) away.push(loc(move(a, 200 + i * 20, 150), now - 3 * 60e3 + i * 20e3));
+  r = await call('POST', '/api/ot/' + token, away);
+  await settle();
+  fam = (await call('GET', '/api/family/' + f.id)).data.fam;
+  assert.equal(fam.done[a.id], 1, 'done by the server');
+  assert.equal(fam.target, null);
+  assert.ok(fam.positions[dev], 'partner dot updated');
+  const st = (await call('GET', `/api/otsetup/${f.id}?device=${dev}`)).data;
+  assert.equal(st.active, true); assert.equal(st.info.batt, 77);
+  // the same batch again (OwnTracks retry) changes nothing
+  await call('POST', '/api/ot/' + token, away);
+  fam = (await call('GET', '/api/family/' + f.id)).data.fam;
+  assert.equal(fam.done[a.id], 1);
+  // wrong / revoked tokens and junk: 200 [] and nothing happens
+  assert.deepEqual((await call('POST', '/api/ot/nottoken', away)).data, []);
+  assert.deepEqual((await call('POST', '/api/ot/' + token, 'not json')).data, []);
+  await call('DELETE', `/api/otsetup/${f.id}?device=${dev}`);
+  assert.deepEqual((await call('POST', '/api/ot/' + token, away)).data, []);
+  assert.equal((await call('GET', `/api/otsetup/${f.id}?device=${dev}`)).data.active, false);
+  assert.equal((await call('POST', `/api/otsetup/${f.id}`, { device: '<x>' })).status, 400);
+});

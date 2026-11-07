@@ -496,3 +496,23 @@ html { transition: background-color .4s; }
 .pocket .pk-auto, .pocket .pk-gps { font-size: .95rem; }
 .pocket .pk-hint { position: absolute; bottom: 24%; left: 24px; right: 24px; font-size: .9rem; color: #5c5c5c; }
 .autolog .linkbtn { min-height: 44px; padding: 10px 6px; margin: -10px 0; }
+
+/* ---------- OwnTracks view */
+.otview .ot-head { max-width: 640px; margin: 0 auto 10px; }
+.otview .ot-head h2 { margin: 2px 0 8px; }
+.otstate { max-width: 640px; margin: 10px auto; padding: 12px 14px; border-radius: 16px; background: var(--surface); border: 2px solid var(--line); }
+.otstate button { margin-left: 6px; }
+.otstate.ok { border-color: var(--ok); background: var(--ok-bg); }
+.otstate.warn { border-color: var(--mid); background: var(--mid-bg); }
+.ot-steps { max-width: 640px; margin: 12px auto; padding-left: 26px; display: grid; gap: 14px; }
+.ot-steps li::marker { font-family: var(--display); font-weight: 700; color: var(--accent); }
+.ot-steps h3 { margin: 0 0 4px; font-size: 1.1rem; }
+.ot-steps p { margin: 4px 0; }
+.ot-btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.ot-btns .btn.big { width: 100%; justify-content: center; min-height: 58px; font-size: 1.1rem; }
+.ot-url code { display: block; word-break: break-all; background: var(--surface-2); padding: 8px 10px; border-radius: 10px; font-size: .85rem; }
+.otview details { margin-top: 8px; }
+.otview details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--accent); font-weight: 600; }
+.ot-info { max-width: 640px; margin: 14px auto; }
+.ot-info ul { padding-left: 4px; list-style: none; display: grid; gap: 6px; margin: 6px 0 0; }
+.otview .row2 { max-width: 640px; margin: 10px auto 30px; }

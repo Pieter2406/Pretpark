@@ -233,3 +233,22 @@ No accounts; knowing the family id is the access.
 - Automatic detection: only queues it started itself (`q.auto`) can be auto-"unqueued"; no eating/resting detection
   while a queue of the plan is open; a manually chosen spot only blocks detection for 20 min; `done` carries `target`
   only when automatic (a tapped, offline "Gedaan" is never dropped).
+
+## OwnTracks: background location with Pretpark closed
+- Why: a web app gets no location in the background (see above); the free OwnTracks app (iOS/Android, open source)
+  does, and POSTs it in HTTP mode to a URL. App view 📡 "Volgen met de app dicht" (Gezin card + a button on Nu) shows
+  the steps: store link (by platform), "⚙️ Instellen in OwnTracks" = `owntracks:///config?inline=<base64 JSON>` with
+  `mode: 3` (HTTP), `url` = `/api/ot/<token>`, `monitoring: 2` (Move), `locatorInterval 30`, `locatorDisplacement 10`,
+  `moveModeLocatorInterval 15`, `ignoreInaccurateLocations 0`, `tid` = initials; manual fallback with the URL; the
+  "Always" location + battery steps; live status (polls `/api/otsetup` every 5 s: last fix, accuracy, battery); stop /
+  new link. Needs "wie ben jij" (the server acts for `fam.me[device]`).
+- Server: `/api/otsetup/<family>?device=` (behind Access) GET status / POST new token (replaces this phone's) / DELETE.
+  `/api/ot/<token>` (Access **bypass app "Pretpark (OwnTracks)"** for `pretpark.pieterverlinden.be/api/ot/*`, checked by
+  the 24-char token instead) always answers `200 []` (OwnTracks retries anything else; a revoked token is quiet).
+  worker/owntracks.js: `otFixes` (locations only, today, sorted, vel km/h → m/s), `step` runs activity.js `addFix` +
+  `detect` "as of" each fix's time (OwnTracks sends its offline queue later), `actionsFor` maps events to the same
+  family actions as the app (queue auto, board, unqueue, done with target / ready in a split, ate, pause, car) with
+  stable aids, and a push to that phone (`notifyDevice`) for queue / done / ready / unqueue / ask / car. `applyAction`
+  (worker/index.js) is the shared optimistic-concurrency write used by /api/family too. The latest good fix also
+  updates `positions[device]` (partner dot). D1 table `ot` (token, family, device, tracker JSON, info, last, created);
+  the cron deletes links after a day without positions. Tests: tests/owntracks.test.js, worker.test.js (OwnTracks).

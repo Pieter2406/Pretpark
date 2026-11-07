@@ -9,6 +9,7 @@ import { newFamily, apply, okDevice } from '../public/family.js';
 import { accessEmail } from './access.js';
 import { decideNotifications, parkOpen } from '../public/logic.js';
 import { okEndpoint, readyMessage, okDataUrl, liveRides, chatMessage, chatNote } from './rules.js';
+import { okToken, newToken, otFixes, step, actionsFor, freshTracker } from './owntracks.js';
 import { sendPush, publicKey } from './push.js';
 
 const DEST = '8d8a8cc7-4523-4437-8bb6-5c87a26ba5ce'; // Walibi Belgium on ThemeParks.wiki
@@ -26,6 +27,8 @@ export default {
     const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
     try {
       if (parts[1] === 'health') return json({ ok: true });
+      // OwnTracks can't log in with Access: this one path is bypassed in Access and checked by its secret token
+      if (parts[1] === 'ot') return await ownTracks(request, env, ctx, parts[2]);
       const email = await accessEmail(request);
       if (!email) return json({ error: 'auth' }, 401);
       if (parts[1] === 'photos') return await photos(request, env, email, parts[2], parts[3], parts[4]);
@@ -35,6 +38,7 @@ export default {
       if (parts[1] === 'vapid') return json({ key: env.VAPID_PRIVATE_JWK ? publicKey(env) : null });
       if (parts[1] === 'family') return await family(request, env, ctx, parts[2]);
       if (parts[1] === 'push') return await push(request, env);
+      if (parts[1] === 'otsetup') return await otSetup(request, env, url, parts[2]);
       return json({ error: 'not found' }, 404);
     } catch (err) {
       if (err.status) return json({ error: err.message }, err.status);
@@ -112,6 +116,9 @@ function schema(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS messages (family TEXT NOT NULL, id TEXT NOT NULL, t INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (family, id))'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS messages_family ON messages (family, t)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS subs (device TEXT PRIMARY KEY, family TEXT NOT NULL, sub TEXT NOT NULL, prefs TEXT NOT NULL, memo TEXT NOT NULL, updated INTEGER NOT NULL)'),
+    // OwnTracks: one secret token per phone; tracker = activity.js state (≤ 45 min of cleaned positions); info = last fix
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS ot (token TEXT PRIMARY KEY, family TEXT NOT NULL, device TEXT NOT NULL, tracker TEXT NOT NULL, info TEXT NOT NULL, last INTEGER NOT NULL, created INTEGER NOT NULL)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS ot_device ON ot (family, device)'),
   ]).catch((err) => { ready = null; throw err; });
   return ready;
 }
@@ -138,24 +145,101 @@ async function family(request, env, ctx, id) {
   const text = await request.text();
   if (text.length > 8000) throw fail(413, 'too big');
   let act; try { act = JSON.parse(text); } catch { throw fail(400, 'bad json'); }
-  // optimistic concurrency: re-read and retry if the other phone changed it in between
+  return json(await applyAction(env, ctx, id, act, now));
+}
+// Apply one validated action with optimistic concurrency (re-read and retry if the other phone changed it in between).
+// → { id, fam, updated, changed }
+async function applyAction(env, ctx, id, act, now = Date.now()) {
   for (let i = 0; i < 4; i++) {
     const row = await env.DB.prepare('SELECT data, updated FROM families WHERE id = ?').bind(id).first();
     if (!row) throw fail(404, 'no-family');
     const before = JSON.parse(row.data);
     let fam;
     try { fam = apply(before, act, now); } catch (e) { throw fail(400, e.message); }
-    if (fam === before) return json({ id, fam, updated: row.updated }); // already applied (same aid): nothing to write
+    if (fam === before) return { id, fam, updated: row.updated, changed: false }; // already applied (same aid)
     const t = Math.max(now, row.updated + 1);
     const res = await env.DB.prepare('UPDATE families SET data = ?, updated = ? WHERE id = ? AND updated = ?').bind(JSON.stringify(fam), t, id, row.updated).run();
     if (res.meta.changes === 1) {
       if (act.type === 'ready' && fam.target && JSON.stringify(fam.target.ready) !== JSON.stringify(before.target?.ready)) {
         ctx?.waitUntil?.(notifyReady(env, id, fam, act).catch((err) => console.error('ready push', err)));
       }
-      return json({ id, fam, updated: t });
+      return { id, fam, updated: t, changed: JSON.stringify(fam.done) !== JSON.stringify(before.done) || JSON.stringify(fam.target) !== JSON.stringify(before.target) || fam.car !== before.car };
     }
   }
   throw fail(409, 'busy, try again');
+}
+
+// ---------- OwnTracks: background location from the free OwnTracks app (worker/owntracks.js)
+// POST /api/ot/<token>: always answers 200 [] (OwnTracks keeps retrying anything else), so a revoked token is quiet.
+async function ownTracks(request, env, ctx, token) {
+  if (request.method !== 'POST' || !okToken(token)) return json([]);
+  await schema(env);
+  const row = await env.DB.prepare('SELECT token, family, device, tracker FROM ot WHERE token = ?').bind(token).first();
+  if (!row) return json([]);
+  const text = await request.text();
+  if (text.length > 400000) return json([]);
+  const now = Date.now();
+  const fixes = otFixes(text, now);
+  if (!fixes.length) return json([]);
+  let tr = freshTracker(JSON.parse(row.tracker || 'null'), fixes[0].t);
+  const famRow = await env.DB.prepare('SELECT data FROM families WHERE id = ?').bind(row.family).first();
+  if (!famRow) return json([]);
+  let fam = JSON.parse(famRow.data);
+  const live = await getLive(ctx).catch(() => null);
+  let lastGood = null, rejected = 0;
+  for (const fix of fixes) {
+    const { events, T, r } = step(tr, fix, fam, row.device, live);
+    if (!r.ok) { rejected++; continue; }
+    lastGood = { ...r.pos, batt: fix.batt };
+    for (const e of events) {
+      for (const { act, note } of actionsFor(e, T, fam, row.device)) {
+        let changed = true;
+        if (act) {
+          try { const res = await applyAction(env, ctx, row.family, act, now); fam = res.fam; changed = res.changed; } catch (err) { console.error('ot action', act.type, err.message); continue; }
+        }
+        if (note && changed) ctx.waitUntil(notifyDevice(env, row.device, note).catch((err) => console.error('ot push', err)));
+      }
+    }
+  }
+  // the partner dot on the other phone: our latest good position
+  if (lastGood && okDevice(row.device) && now - lastGood.t < 10 * 60e3) {
+    try { await applyAction(env, ctx, row.family, { type: 'pos', device: row.device, lat: lastGood.lat, lon: lastGood.lon, at: lastGood.t }, now); } catch { /* ignore */ }
+  }
+  const info = { t: lastGood?.t || null, acc: lastGood ? Math.round(lastGood.acc) : null, batt: lastGood?.batt ?? null, n: fixes.length, rejected };
+  await env.DB.prepare('UPDATE ot SET tracker = ?, info = ?, last = ? WHERE token = ?').bind(JSON.stringify(tr), JSON.stringify(info), now, token).run();
+  return json([]);
+}
+async function notifyDevice(env, device, note) {
+  if (!env.VAPID_PRIVATE_JWK) return;
+  const r = await env.DB.prepare('SELECT sub FROM subs WHERE device = ?').bind(device).first();
+  if (!r) return;
+  const status = await pushTo(env, r.sub, note);
+  if (status === 404 || status === 410) await env.DB.prepare('DELETE FROM subs WHERE device = ?').bind(device).run();
+}
+// /api/otsetup/<family>?device=…  GET status, POST { device } → a new token (replaces this phone's old one), DELETE stop
+async function otSetup(request, env, url, id) {
+  await schema(env);
+  if (!okFamily(id)) throw fail(400, 'bad family');
+  const fam = await env.DB.prepare('SELECT id FROM families WHERE id = ?').bind(id).first();
+  if (!fam) throw fail(404, 'no-family');
+  let device = url.searchParams.get('device');
+  if (request.method === 'POST') { try { device = (await request.json())?.device; } catch { throw fail(400, 'bad json'); } }
+  if (!okDevice(device)) throw fail(400, 'bad device');
+  if (request.method === 'GET') {
+    const r = await env.DB.prepare('SELECT token, info, last, created FROM ot WHERE family = ? AND device = ?').bind(id, device).first();
+    return json(r ? { active: true, token: r.token, info: JSON.parse(r.info), last: r.last, created: r.created } : { active: false });
+  }
+  if (request.method === 'DELETE') {
+    await env.DB.prepare('DELETE FROM ot WHERE family = ? AND device = ?').bind(id, device).run();
+    return json({ active: false });
+  }
+  if (request.method !== 'POST') throw fail(405, 'method not allowed');
+  const token = newToken(), now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM ot WHERE family = ? AND device = ?').bind(id, device),
+    env.DB.prepare('INSERT INTO ot (token, family, device, tracker, info, last, created) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(token, id, device, 'null', '{}', 0, now),
+  ]);
+  return json({ active: true, token, info: {}, last: 0, created: now }, 201);
 }
 
 // Sends one notification; a stored subscription that isn't (or is no longer) a valid push service counts as gone.
@@ -385,6 +469,8 @@ async function notifyAll(env, ctx) {
   // a family with photos stays (the album and the day's log belong together); photos are never deleted here
   await env.DB.prepare('DELETE FROM families WHERE updated < ? AND id NOT IN (SELECT DISTINCT family FROM photos)').bind(oldFam).run();
   await env.DB.prepare('DELETE FROM messages WHERE t < ? OR family NOT IN (SELECT id FROM families)').bind(oldFam).run();
+  // OwnTracks links: gone after a day without positions (the location track itself is never kept longer than 45 min)
+  await env.DB.prepare('DELETE FROM ot WHERE (last < ? AND created < ?) OR family NOT IN (SELECT id FROM families)').bind(Date.now() - 24 * 3600e3, Date.now() - 24 * 3600e3).run();
   if (!env.VAPID_PRIVATE_JWK) return;
   const { results } = await env.DB.prepare(
     'SELECT s.device, s.sub, s.prefs, s.memo, f.data FROM subs s JOIN families f ON f.id = s.family WHERE f.updated > ?',

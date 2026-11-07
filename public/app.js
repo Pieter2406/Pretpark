@@ -588,6 +588,7 @@ function renderNow() {
   html += autoCard();
   if (!meId() && people().some((p) => p.kind === 'adult')) html += '<button class="ghost small whoami" data-go="onboard">🙋 Wie ben jij op deze gsm? Tik om te kiezen</button>';
   if (navigator.wakeLock && S.gps && !S.sim) html += '<button class="ghost small pocketbtn" data-go="pocket">🫥 Zakmodus: blijf volgen met de gsm in je zak <span class="muted">(±10% batterij/uur)</span></button>';
+  if (S.auto) html += `<button class="ghost small pocketbtn" data-go="ot">📡 ${store.get('otActive', false) ? 'Volgen met de app dicht: aan ✅' : 'Volgen met de app dicht (OwnTracks)'}</button>`;
   html += `<div class="quick">
     <button data-go="food"><span aria-hidden="true">🍽️</span>Eten</button>
     <button data-go="toilet"><span aria-hidden="true">🚻</span>Toilet</button>
@@ -815,6 +816,9 @@ function renderFam() {
       <div class="seg themeseg" role="radiogroup" aria-label="Kleuren">${[['sun', '🌅 Automatisch (zon)'], ['light', '☀️ Licht'], ['dark', '🌙 Donker'], ['system', '📱 Zoals mijn gsm']].map(([k, t]) => `<button role="radio" data-themepick="${k}" aria-checked="${S.theme === k}" aria-pressed="${S.theme === k}">${t}</button>`).join('')}</div>
       <p class="small muted" style="margin:6px 0 10px">${S.theme === 'sun' ? (() => { const st = sunTimes(new Date()); return `Vandaag licht van ${hhmm(st.rise)} tot zonsondergang om ${hhmm(st.set)}, daarna donker.`; })() : S.theme === 'system' ? 'Volgt de licht/donker-instelling van je gsm.' : ''}</p>
       <label class="tog"><input type="checkbox" data-setting="voice" ${S.voice ? 'checked' : ''}> 🔊 Gesproken aanwijzingen in de wandelgids</label></div>
+    <div class="card"><h2>📡 Volgen met de app dicht</h2>
+      <p class="small muted" style="margin:0 0 8px">Met de gratis app OwnTracks herkent Pretpark ook wat jullie doen als de app dicht is en de gsm in je zak zit.</p>
+      <button class="primary" data-go="ot" style="width:100%">📡 ${store.get('otActive', false) ? 'Bekijk de koppeling ✅' : 'Instellen (2 minuten)'}</button></div>
     <div class="card"><h2>🤖 Automatisch herkennen</h2>
       <label class="tog"><input type="checkbox" data-setting="auto" ${S.auto ? 'checked' : ''}> Herken zelf wat we doen</label>
       <p class="small muted" style="margin:6px 0 0">Aan de hand van je locatie en de tijd: in de rij, aan de beurt, klaar, uit de rij, eten, rusten en waar de auto staat. Je krijgt altijd een “Klopt niet”-knop. Vreemde locatiesprongen negeert de app.</p>
@@ -1043,7 +1047,7 @@ function closeDialog(el) {
 }
 const closers = {
   sheet: () => closeSheet(), guide: () => closeGuide(), tview: () => closeViewer(), pview: () => closePhoto(),
-  story: () => closeStory(), chat: () => closeChat(), pocket: () => closePocket(),
+  story: () => closeStory(), chat: () => closeChat(), pocket: () => closePocket(), otview: () => closeOt(),
 };
 // pocket mode: only a long swipe up opens the app again (taps through the fabric do nothing)
 {
@@ -1418,6 +1422,79 @@ function storyFun() {
       ${best.length ? `<p>🔮 Beste rader: <b>${esc(person(best[0][0])?.name || '')}</b> (${best[0][1]}×)</p>` : ''}</section>`);
   }
   return out.join('');
+}
+
+
+// ---------- OwnTracks: background location while Pretpark is closed (free app → /api/ot/<token> → server detection)
+const OT_IOS = 'https://apps.apple.com/app/owntracks/id692424691';
+const OT_ANDROID = 'https://play.google.com/store/apps/details?id=org.owntracks.android';
+const isAndroid = /Android/.test(navigator.userAgent);
+const otUrl = (token) => `${location.origin}/api/ot/${token}`;
+function otConfigLink(token) {
+  const me = person(meId());
+  const tid = ((me?.name || 'PP').normalize('NFD').replace(/[^A-Za-z]/g, '').slice(0, 2) || 'PP').toUpperCase();
+  // HTTP mode (3), "Move" monitoring (2): frequent GPS fixes in the background; we filter ourselves (ignore… = 0)
+  const cfg = { _type: 'configuration', mode: 3, url: otUrl(token), auth: false, deviceId: 'pretpark', tid, monitoring: 2,
+    locatorInterval: 30, locatorDisplacement: 10, moveModeLocatorInterval: 15, ignoreInaccurateLocations: 0, extendedData: false, cmd: false, remoteConfiguration: false };
+  return 'owntracks:///config?inline=' + btoa(unescape(encodeURIComponent(JSON.stringify(cfg))));
+}
+async function openOt() {
+  S.ot = S.ot || { st: null, busy: false };
+  $('#otview').hidden = false; openDialog($('#otview'));
+  renderOt();
+  await otStatus(true);
+  clearInterval(openOt.timer); openOt.timer = setInterval(() => { if (!document.hidden && !$('#otview').hidden) otStatus(false); }, 5000);
+}
+function closeOt() { clearInterval(openOt.timer); $('#otview').hidden = true; closeDialog($('#otview')); render(); }
+async function otStatus(create) {
+  if (!S.famId) return;
+  try {
+    let st = await api(`/api/otsetup/${S.famId}?device=${device}`);
+    if (!st.active && create && meId()) st = await api(`/api/otsetup/${S.famId}`, { method: 'POST', body: { device } }); // a link to tap right away
+    S.ot.st = st; store.set('otActive', !!st.active && !!st.info?.t);
+  } catch { S.ot.st = S.ot.st || null; }
+  renderOt();
+}
+function renderOt() {
+  const el = $('#otview'); if (!el || el.hidden) return;
+  const st = S.ot?.st, info = st?.info || {};
+  const fresh = info.t && Date.now() - info.t < 10 * 60e3;
+  const state = !S.famId ? '' : !meId() ? '<div class="otstate warn">🙋 Kies eerst wie je bent op deze gsm, dan weet Pretpark welke rij van jou is. <button class="primary" data-go="onboard">Kies</button></div>'
+    : !st ? '<div class="otstate">⏳ Laden… (geen bereik?)</div>'
+    : !st.active ? '<div class="otstate">⚪ Nog niet gekoppeld.</div>'
+    : fresh ? `<div class="otstate ok">✅ <b>Verbonden.</b> Laatste locatie ${hhmm(info.t)} (±${info.acc ?? '?'} m${info.batt != null ? `, batterij ${info.batt}%` : ''}). Je mag Pretpark nu sluiten.</div>`
+    : info.t ? `<div class="otstate warn">⚠️ Laatste locatie om ${hhmm(info.t)}: al een tijd niets. Staat OwnTracks op <b>Move</b> en mag het <b>altijd</b> je locatie gebruiken?</div>`
+    : '<div class="otstate">⏳ Gekoppeld, wacht op de eerste locatie. Tik in OwnTracks op <b>↑</b> (publiceer) om te testen.</div>';
+  const store1 = isAndroid ? `<a class="btn primary" href="${OT_ANDROID}" target="_blank" rel="noopener">▶️ OwnTracks in de Play Store</a>`
+    : isIOS ? `<a class="btn primary" href="${OT_IOS}" target="_blank" rel="noopener"> App Store: OwnTracks</a>`
+    : `<a class="btn" href="${OT_IOS}" target="_blank" rel="noopener">iPhone: App Store</a> <a class="btn" href="${OT_ANDROID}" target="_blank" rel="noopener">Android: Play Store</a>`;
+  const token = st?.active ? st.token : null;
+  const perm = isAndroid
+    ? 'Sta locatie toe met <b>Altijd toestaan</b>. Zet daarna bij Instellingen › Apps › OwnTracks › Batterij op <b>Onbeperkt</b> (anders legt Android het stil). Laat de melding van OwnTracks staan.'
+    : 'Tik op <b>Toestaan</b>. Kies daarna in Instellingen › OwnTracks › Locatie: <b>Altijd</b>, en zet <b>Exacte locatie</b> aan. Laat “Ververs op achtergrond” aan.';
+  el.innerHTML = `<div class="st-top"><button data-go="otclose" aria-label="Sluiten">✕</button></div>
+    <header class="ot-head"><p class="kicker">Volgen met de app dicht</p><h2>📡 Pretpark in je zak</h2>
+      <p class="muted">Een web-app krijgt geen locatie als ze dicht is: iPhone en Android laten dat niet toe. De gratis app <b>OwnTracks</b> wel. Die stuurt je locatie op de achtergrond naar jullie eigen Pretpark-server. Pretpark herkent dan zelf dat je in de rij staat, aan de beurt bent of klaar bent, en stuurt je een melding.</p></header>
+    ${state}
+    <ol class="ot-steps">
+      <li><h3>Installeer OwnTracks</h3><p class="small muted">Gratis, zonder account, open source.</p><div class="ot-btns">${store1}</div></li>
+      <li><h3>Koppel aan Pretpark</h3>
+        ${token ? `<p class="small muted">Tik op de knop. OwnTracks opent en vraagt of het de instellingen mag overnemen: tik op <b>OK / Importeren</b>.</p>
+          <div class="ot-btns"><a class="btn primary big" href="${otConfigLink(token)}">⚙️ Instellen in OwnTracks</a></div>
+          <details class="small"><summary>Lukt de knop niet? Zelf instellen</summary>
+            <p>In OwnTracks › Instellingen (of ⓘ › Instellingen): <b>Modus: HTTP</b>, <b>URL</b> = de link hieronder, <b>Monitoring: Move</b>. Gebruikersnaam en wachtwoord leeg laten.</p>
+            <p class="ot-url"><code>${esc(otUrl(token))}</code></p><button data-go="otcopy">📋 Kopieer de link</button>
+            <p class="muted">Deze link is geheim: wie hem heeft, kan locaties naar jullie gezin sturen. Deel hem niet.</p></details>`
+          : '<p class="small muted">Verschijnt zodra je gekozen hebt wie je bent.</p>'}</li>
+      <li><h3>Locatie altijd toestaan</h3><p class="small">${perm}</p></li>
+      <li><h3>Test</h3><p class="small">In OwnTracks staat bovenaan <b>Move</b> (dat zette stap 2). Tik op <b>↑</b> om je locatie nu te sturen: bovenaan deze pagina verschijnt ✅ binnen enkele seconden.</p></li>
+    </ol>
+    <div class="card ot-info"><h3>Goed om te weten</h3>
+      <ul class="small"><li>🔋 Move-modus gebruikt de GPS op de achtergrond: reken op flink wat batterij. Een powerbank helpt.</li>
+      <li>🔒 Je locatie gaat alleen naar jullie Pretpark-server. Pretpark houdt ze maar 45 minuten bij, en de koppeling verdwijnt na een dag zonder locaties.</li>
+      <li>🤖 Wat het herkent: in de rij, aan de beurt, gedaan (bij splitsen: “wij zijn klaar”), uit de rij, eten, rust en de parkeerplek. Klopt iets niet: open Pretpark en tik “Klopt niet”.</li>
+      <li>🌙 Na het park: tik hieronder op <b>Stoppen</b> en zet OwnTracks op <b>Quiet</b> of verwijder de app.</li></ul></div>
+    ${st?.active ? '<div class="row2"><button data-go="otstop">⏹️ Stoppen met volgen</button><button data-go="otnew">🔄 Nieuwe koppeling</button></div>' : ''}`;
 }
 
 // ---------- stickers: every ride you do is a sticker
@@ -1989,6 +2066,11 @@ document.addEventListener('click', async (e) => {
     case 'ratelater': S.pendingRate = null; render(); break;
     case 'pocket': openPocket(); break;
     case 'autoundo': await undoLast(); break;
+    case 'ot': openOt(); break;
+    case 'otclose': closeOt(); break;
+    case 'otcopy': { const u = S.ot?.st?.token ? otUrl(S.ot.st.token) : ''; try { await navigator.clipboard.writeText(u); toast('Link gekopieerd'); } catch { toast('Kopiëren lukte niet: houd de link ingedrukt'); } break; }
+    case 'otstop': try { await api(`/api/otsetup/${S.famId}?device=${device}`, { method: 'DELETE' }); S.ot.st = { active: false }; store.set('otActive', false); toast('Gestopt. Zet OwnTracks op Quiet of verwijder de app.', null, 6000); } catch { toast('Geen verbinding. Probeer zo opnieuw.'); } renderOt(); break;
+    case 'otnew': try { S.ot.st = await api(`/api/otsetup/${S.famId}`, { method: 'POST', body: { device } }); toast('Nieuwe koppeling: tik opnieuw op “Instellen in OwnTracks”.', null, 6000); } catch { toast('Geen verbinding. Probeer zo opnieuw.'); } renderOt(); break;
     case 'queue': {
       const plan = S.fam.target?.plan; if (!plan) break;
       if (plan.type === 'split' && !meId()) { toast('Kies eerst wie je bent, dan weet ik welke rij van jullie is'); onboard('who'); break; }
