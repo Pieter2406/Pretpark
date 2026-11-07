@@ -30,7 +30,8 @@ one family's visit (2 adults, one pregnant; a child ≥140 cm; a toddler ~95 cm)
 ## Access (security)
 - Access app "Pretpark" (id 314d5541-…, AUD in worker/access.js) on the whole host, policy "Gezin" = the family e-mails (keep in sync with ALLOWED),
   IdP = one-time PIN, session 720 h. A second Access app bypasses only /manifest.webmanifest, /icon.svg and
-  /apple-touch-icon.png (home-screen install fetches these without cookies).
+  /apple-touch-icon.png (home-screen install fetches these without cookies). A third Access app "Pretpark (OwnTracks)"
+  (id 551e20e1-…) bypasses only pretpark.pieterverlinden.be/api/ot (OwnTracks can't log in; the Worker checks the token).
 - worker/access.js verifies the Access JWT again for every /api call (team pieterverlinden.cloudflareaccess.com).
   To add a person: add the e-mail to the Access policy (cf zero-trust access applications update) AND to ALLOWED.
 - Local dev skips the check only for plain-http loopback requests without cf-ray.
