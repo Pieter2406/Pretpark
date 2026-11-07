@@ -507,3 +507,20 @@ No accounts; knowing the family id is the access.
   doesn't flip back). Server PATCH accepts `near` (control chars stripped, trimmed, ≤ 60) and marks `placed: 'hand'`.
 - Album: "📍 n foto's zonder plek: aanvullen" opens the next one without a place, picker included.
 - Tests: worker.test.js (PATCH near), scratchpad placepick.js (Chromium + WebKit).
+
+## Kilometres walked (Wrapped, 8 Nov)
+- No full track exists (the tracker keeps 45 min, OwnTracks fixes aren't stored), so two sources, the larger wins:
+  - Measured: activity.js `walkAdd` (called by `addFix` on every good fix, so the app and the OwnTracks receiver both
+    count): counts movement ≥ 15 m (or the position's uncertainty) from the last counted point, only at ≤ 2.5 m/s from
+    the previous position (no coasters/train/car), after a > 2 min gap the straight line × 1.3; resets on a new Brussels
+    day (`dayKey`); kept across `freshTracker`. Sent with `pos` (`m`, `day`, OwnTracks `src: 'ot'`) → `fam.walked[device]
+    = { day, app, ot }` (never lowered within a day, a newer day replaces, 12 devices).
+  - Estimated: wrapdata.js `walkStats` walks the park's path graph (app: `S.park.fromHere(a).metres(b)`, cached per start)
+    car → entrance → each ride of the log (in a split: the person's own half from the log's `who` {rideId: group}, new in
+    `done`; older entries: the first ride they may ride by `canRide`) and each photo the person took (photo `by` email's
+    first name = person name) → back once the day is over (`ended`: after closing / 23:00). Children: at least the
+    shortest adult walk.
+- Wrapped: slide `walk` (≥ 500 m; "samen" when everyone has the same km; steps ≈ m / 0.72), a "km gestapt" cell on the
+  book's stats page. "Today" = the last 14 h like dayData; measured counts of the newest ride/photo's calendar day.
+- Tests: tests/walk.test.js; scratchpad walke2e.js (simulated GPS walk → tracker + server count; Chromium + WebKit).
+- 7 Nov (before this existed): estimate ≈ 6 km for everyone (lower bound: no detours, toilets, food).

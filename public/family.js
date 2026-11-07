@@ -154,7 +154,9 @@ export function apply(fam, act, now) {
       }
       for (const id of ids) f.done[id] = (f.done[id] || 0) + 1;
       const s = ends ? target.setAt : Number.isFinite(act.plan) ? act.plan : null;
-      f.log = [...f.log, { t, ids, ...(s != null ? { s } : {}) }].sort((a, b) => a.t - b.t).slice(-80);
+      // in a split: who went to which ride (the Wrapped's walking estimate)
+      const who = ends && target.plan?.type === 'split' ? Object.fromEntries(target.plan.parts.filter((p) => !p.rest && p.id && ids.includes(p.id)).map((p) => [p.id, p.group])) : null;
+      f.log = [...f.log, { t, ids, ...(s != null ? { s } : {}), ...(who && Object.keys(who).length ? { who } : {}) }].sort((a, b) => a.t - b.t).slice(-80);
       if (ends) { f.prev = target; f.target = null; } // kept for "Ongedaan" (queue, guesses, ready come back with it)
       break;
     }
@@ -300,6 +302,13 @@ export function apply(fam, act, now) {
     }
     case 'pos':
       if (!okDevice(act.device)) throw new Error('bad device');
+      // metres walked today on this phone (activity.js walkAdd): kept per source, never lowered within a day (an
+      // old copy arriving late can't undo walking); the Wrapped takes a person's highest count
+      if (act.m != null && /^\d{4}-\d\d-\d\d$/.test(String(act.day || ''))) {
+        const src = act.src === 'ot' ? 'ot' : 'app', m = Math.round(num(act.m, 0, 100000, 0)), cur = f.walked?.[act.device];
+        const next = !cur || cur.day < act.day ? { day: act.day, [src]: m } : cur.day === act.day ? { ...cur, [src]: Math.max(cur[src] || 0, m) } : cur;
+        f.walked = Object.fromEntries(Object.entries({ ...(f.walked || {}), [act.device]: next }).sort((a, b) => b[1].day.localeCompare(a[1].day)).slice(0, 12));
+      }
       if ((f.positions[act.device]?.t || 0) > t) break; // a stale fix doesn't replace a newer one
       f.positions[act.device] = { lat: num(act.lat, -90, 90, 0), lon: num(act.lon, -180, 180, 0), t };
       break;

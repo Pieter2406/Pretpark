@@ -32,7 +32,8 @@ export const LIMITS = {
 };
 
 // A tracker saved more than 6 h ago (yesterday) starts fresh: old drives, "been near" and history mean nothing now
-export const freshTracker = (t, now) => (t && Array.isArray(t.hist) && t.far && now - (t.lastGood || 0) < 6 * 3600e3 ? t : newTracker());
+// (the metres walked today survive that: walkAdd starts a new count on a new day itself)
+export const freshTracker = (t, now) => (t && Array.isArray(t.hist) && t.far && now - (t.lastGood || 0) < 6 * 3600e3 ? t : { ...newTracker(), ...(t?.walk ? { walk: t.walk } : {}) });
 export function newTracker() {
   return { kf: null, raw: null, rej: [], hist: [], fast: 0, drive: null, far: { n: 0, since: 0, on: false }, approx: 0, emitted: {}, lastGood: 0 };
 }
@@ -102,7 +103,35 @@ export function addFix(tr, fix, now) {
   while (h.length > 30 && t - h[0].t > L.histMin * 60e3) h.shift();
   const out = { ok: true, pos, gap: tr.lastGood ? t - tr.lastGood : null };
   tr.lastGood = t;
+  walkAdd(tr, pos);
   return out;
+}
+
+// ---------- metres walked today (for the Wrapped), from the cleaned track
+// Counted only when we really moved: ≥ 15 m (or the position's own uncertainty) from the last counted point, so GPS
+// wobble in a 40-min queue adds nothing; and only at walking speed (≤ 2.5 m/s: not on a coaster, the train or in the
+// car). After a gap (app closed, no OwnTracks) the straight line × 1.3, as paths aren't straight. A new day (Brussels)
+// starts at 0. tr.walk = { day: 'YYYY-MM-DD', m, at: last counted point, last: last position }
+export const WALK = { minMove: 15, maxSpeed: 2.5, gap: 120e3, detour: 1.3 };
+export function dayKey(t) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Brussels', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(t).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+export function walkAdd(tr, pos) {
+  const day = dayKey(pos.t);
+  if (!tr.walk || tr.walk.day !== day) tr.walk = { day, m: 0, at: null };
+  const w = tr.walk, here = { lat: +pos.lat.toFixed(6), lon: +pos.lon.toFixed(6), t: pos.t };
+  if (!w.at) { w.at = w.last = here; return; }
+  const prev = w.last || w.at;
+  if (pos.t <= prev.t) return;
+  w.last = here;
+  // speed and gap from the previous position (the counted point can be 40 min old after a queue)
+  const step = pos.t - prev.t;
+  if (dist(prev, pos) / (step / 1000) > WALK.maxSpeed) { w.at = here; return; } // on a ride / in the car
+  const d = dist(w.at, pos);
+  if (d < Math.max(WALK.minMove, pos.acc || 0)) return;
+  w.m = Math.round(w.m + (step > WALK.gap ? d * WALK.detour : d));
+  w.at = here;
 }
 
 // "Not in the park": once we've been near, only after 3 good fixes over ≥ 60 s far away; back after 2 near (hysteresis)

@@ -233,7 +233,7 @@ async function otReceive(request, env, ctx, token) {
   const prev = fam.positions?.[row.device];
   if (lastGood && okDevice(row.device) && now - lastGood.t < 10 * 60e3
     && (!prev || lastGood.t - prev.t > 60e3 || Math.hypot((lastGood.lat - prev.lat) * 111194, (lastGood.lon - prev.lon) * 70500) > 25)) {
-    try { await applyAction(env, ctx, row.family, { type: 'pos', device: row.device, lat: lastGood.lat, lon: lastGood.lon, at: lastGood.t }, now); } catch { /* ignore */ }
+    try { await applyAction(env, ctx, row.family, { type: 'pos', device: row.device, lat: lastGood.lat, lon: lastGood.lon, at: lastGood.t, ...(tr.walk ? { m: tr.walk.m, day: tr.walk.day, src: 'ot' } : {}) }, now); } catch { /* ignore */ }
   }
   const info = { t: lastGood?.t || null, acc: lastGood ? Math.round(lastGood.acc) : null, batt: lastGood?.batt ?? null, n: fixes.length, rejected, contact: now };
   // versioned on `last`: a parallel request for the same phone that saved first wins; we then send no pushes

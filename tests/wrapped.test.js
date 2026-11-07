@@ -38,7 +38,7 @@ test('dayData: today only, toppers, the loved ride, queues, quiz, photos', () =>
 
 test('slides: only the ones with something to say', () => {
   const kinds = slidesFor(dayData({ fam, album, people: DEFAULT_PEOPLE, now: NOW })).map((s) => s.kind);
-  assert.deepEqual(kinds, ['intro', 'rides', 'toppers', 'loved', 'queue', 'quiz', 'photos', 'timeline', 'outro']);
+  assert.deepEqual(kinds, ['intro', 'rides', 'toppers', 'loved', 'queue', 'walk', 'quiz', 'photos', 'timeline', 'outro']);
   assert.deepEqual(slidesFor(dayData({ fam: {}, album: [], people: DEFAULT_PEOPLE, now: NOW })).map((s) => s.kind), ['intro', 'outro']);
 });
 

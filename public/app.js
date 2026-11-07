@@ -357,7 +357,7 @@ function usePosition(g, c, good, posT) {
   if (good && S.famId && (!S.sim || away) && (away ? now - lastPost.t > 600e3 : !lastPost.p || (distM(lastPost.p, here) > 25 && now - lastPost.t > 60e3) || now - lastPost.t > 180e3)) {
     const p = away ? { lat: g.lat, lon: g.lon } : here;
     lastPost = { t: now, p };
-    act({ type: 'pos', device, lat: p.lat, lon: p.lon }, true);
+    act({ type: 'pos', device, lat: p.lat, lon: p.lon, ...(S.tr.walk ? { m: S.tr.walk.m, day: S.tr.walk.day } : {}) }, true);
   }
 }
 function onGpsError(err) {
@@ -535,7 +535,11 @@ const wrapAssets = {
   full: (p) => photoUrl(p.id, 'full'),
   ridePhoto: (a) => (a ? photoSrc(a) : null),
 };
-const dayInput = () => ({ fam: S.fam, album: albumItems().filter((x) => !x.pending), people: people() });
+// walking distances for the Wrapped: over the park's paths (one Dijkstra per starting point), this phone's own count
+// (newer than the family copy) and whether the day is over (then the walk back to the exit/car counts too)
+const walkMetres = () => { const cache = new Map(); return (a, b) => { if (!S.park) return distM(a, b) * 1.3; const k = `${a.lat},${a.lon}`; if (!cache.has(k)) cache.set(k, S.park.fromHere(a)); return cache.get(k).metres(b); }; };
+const dayInput = () => ({ fam: S.fam, album: albumItems().filter((x) => !x.pending), people: people(),
+  walk: { metres: walkMetres(), local: { device, walk: S.tr?.walk }, ended: !!(S.live?.close && Date.now() > S.live.close) || new Date().getHours() >= 23 } });
 async function openWrapped() {
   const { data } = await wrapMods();
   W.d = data.dayData(dayInput()); W.slides = data.slidesFor(W.d); W.i = 0;

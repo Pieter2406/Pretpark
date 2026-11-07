@@ -114,6 +114,21 @@ export async function drawSlide(ctx, slide, i, d, assets) {
       if (d.queue.longest) text(ctx, `Langste: ${d.queue.longest.a.icon} ${d.queue.longest.a.name}, ${d.queue.longest.m} min`, M, 1300, { size: 54, maxW: W - 2 * M });
       if (d.guesser) text(ctx, `🔮 Beste rader: ${d.guesser.name} (${d.guesser.wins}×)`, M, 1460, { size: 58, weight: 700, maxW: W - 2 * M });
       break;
+    case 'walk': {
+      const w = d.walk, km = (m) => (m / 1000).toLocaleString('nl-BE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      const same = w.length > 1 && w.every((x) => km(x.m) === km(w[0].m)); // all together all day
+      text(ctx, 'Gestapt vandaag', M, 260, { size: 70 });
+      big(km(w[0].m), 360, same ? 'km · samen' : `km · ${w[0].name}`);
+      text(ctx, '👟', W - M - 200, 300, { size: 200 });
+      let y = 900;
+      if (same) { text(ctx, w.map((x) => `${emojiOf(x)} ${x.name}`).join('   '), M, y, { size: 54, weight: 600, maxW: W - 2 * M, maxLines: 3 }); y += 220; }
+      else for (const x of w.slice(1, 5)) { text(ctx, `${emojiOf(x)} ${x.name}: ${km(x.m)} km`, M, y, { size: 60, weight: 600, maxW: W - 2 * M, maxLines: 1 }); y += 95; }
+      const steps = Math.round(w[0].m / 0.72 / 1000) * 1000; // ≈ 0.72 m per adult step
+      text(ctx, `≈ ${steps.toLocaleString('nl-BE')} stappen ${same ? 'per volwassene' : `voor ${w[0].name}`}`, M, y + 30, { size: 52, weight: 500, color: 'rgba(255,255,255,.9)', maxW: W - 2 * M });
+      const how = w.every((x) => x.how === 'gemeten') ? 'gemeten met de gps' : w.every((x) => x.how === 'geschat') ? 'geschat langs de paden van de attracties en foto’s' : 'gemeten met de gps of geschat langs de paden';
+      text(ctx, how, M, y + 130, { size: 40, weight: 500, color: 'rgba(255,255,255,.75)', maxW: W - 2 * M, maxLines: 2 });
+      break;
+    }
     case 'quiz': {
       text(ctx, 'Quizkampioen', M, 300, { size: 80 });
       text(ctx, '👑', M, 450, { size: 200 });
@@ -226,7 +241,8 @@ export async function drawPage(ctx, page, d, { style = 'klassiek', size = 'lands
     case 'stats': {
       text(ctx, 'Onze dag in cijfers', M, M, { size: (style === 'polaroid' ? 120 : 92) * k, weight: 600, font: st.title, color: style === 'ibilaw' ? st.accent : st.ink });
       const cells = [[d.rideCount, d.rideCount === 1 ? 'ritje' : 'ritjes'], [d.distinct, 'attracties'], [d.photos.length, 'foto’s'], [`${d.toppers.done.length}/${d.toppers.all.length}`, 'toppers'],
-        ...(d.queue.n ? [[d.queue.min, 'minuten in de rij']] : []), ...(d.first ? [[`${hhmm(d.first)}–${hhmm(d.last)}`, 'van eerste tot laatste rit']] : [])];
+        ...(d.queue.n ? [[d.queue.min, 'minuten in de rij']] : []),
+        ...(d.walk?.length && d.walk[0].m >= 500 ? [[`${(d.walk[0].m / 1000).toLocaleString('nl-BE', { maximumFractionDigits: 1 })} km`, d.walk.length > 1 && d.walk.every((x) => Math.round(x.m / 100) === Math.round(d.walk[0].m / 100)) ? 'gestapt, samen' : `gestapt (${d.walk[0].name})`]] : []), ...(d.first ? [[`${hhmm(d.first)}–${hhmm(d.last)}`, 'van eerste tot laatste rit']] : [])];
       const cols = W > H ? 3 : 2, cw = (W - 2 * M) / cols, top = M + 230 * k, rowH = (H - top - M - 110 * k) / Math.ceil(cells.length / cols);
       cells.forEach(([v, l], c) => {
         const x = M + (c % cols) * cw, y = top + Math.floor(c / cols) * rowH;

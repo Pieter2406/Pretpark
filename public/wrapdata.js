@@ -4,14 +4,19 @@
 // - bookPlan: the photo book's pages (cover, numbers, photo pages with a layout per page, timeline, end)
 // - makePdf: a minimal PDF with one full-page JPEG per page (iOS home-screen apps can't print, so the app builds
 //   the PDF itself and hands it to the share sheet: save to Files/Books, print, send)
-import { byId, COOL } from './logic.js';
+import { byId, COOL, canRide, distM } from './logic.js';
+import { ATTRACTIONS, FOOD, ENTRANCE } from './data.js';
+import { SPOOKY } from './shows.js';
+import { spotLabel } from './exif.js';
+import { dayKey } from './activity.js';
 
 const DAY = 14 * 3600e3;
 const TOP = Object.entries(COOL).filter(([, t]) => t === 1).map(([n]) => n);
 const avg = (xs) => xs.reduce((s, x) => s + x, 0) / (xs.length || 1);
 
 // fam: the family state; album: [{id, t, near, star, caption, by, w, h, full}]; people: [{id, name, …}]
-export function dayData({ fam, album = [], people = [], now = Date.now() }) {
+// walk: the extra inputs of walkStats ({ metres, local, ended }), optional
+export function dayData({ fam, album = [], people = [], now = Date.now(), walk = {} }) {
   const today = (t) => t && now - t < DAY && t <= now + 60e3;
   const rides = (fam?.log || []).filter((l) => today(l.t)).flatMap((l) => (l.ids || []).map((id) => ({ t: l.t, id, a: byId[id] })))
     .filter((r) => r.a && r.a.cat).sort((x, y) => x.t - y.t);
@@ -44,7 +49,63 @@ export function dayData({ fam, album = [], people = [], now = Date.now() }) {
     quiz,
     photos, starred: photos.filter((p) => p.star),
     meals: hist.filter((h) => h.k === 'ate').length, pauses: hist.filter((h) => h.k === 'pause').length,
+    walk: walkStats({ fam, people, album, now, ...walk }),
   };
+}
+
+// ---------- kilometres walked, per person
+// Measured: the highest count of any of that person's phones today (fam.walked, app GPS or OwnTracks; `local` = this
+// phone's own newer count). It misses the time the app was closed without OwnTracks, so it is a lower bound.
+// Estimated: the walk over the park's paths (metres(a, b), straight line × 1.3 without the path graph) from the car and
+// the entrance past every ride that person did (in a split: their own half's ride, else the first one they may ride)
+// and every place where they took a photo, in time order, and back once the day is over (`ended`). Also a lower bound
+// (no detours, toilets, food), so the larger of the two is shown, marked "gemeten" or "geschat". A child walks at
+// least as far as the adult who walked least (children have no phone and take no photos).
+const PLACES = new Map([...ATTRACTIONS.map((a) => [a.name, a]), ...FOOD.map((f) => [f.name, f]), ...SPOOKY.map((s) => [spotLabel(s), s])]);
+const firstName = (email) => String(email || '').split('@')[0].split(/[._]/)[0].toLowerCase();
+const straight = (a, b) => distM(a, b) * 1.3;
+export function walkStats({ fam, people = [], album = [], now = Date.now(), metres = straight, local = null, ended = false }) {
+  // "today" as in dayData (the last 14 h: a Wrapped opened after midnight still shows the evening); the measured
+  // counts are those of the calendar day of the newest ride or photo
+  const today = (t) => t && now - t < DAY && t <= now + 60e3;
+  const latest = Math.max(0, ...(fam?.log || []).map((l) => l.t).filter(today), ...album.map((p) => p.t).filter(today));
+  const day = dayKey(latest || now);
+  const meas = {};
+  const walked = { ...(fam?.walked || {}) };
+  if (local?.device && local.walk?.day === day) { const w = walked[local.device]?.day === day ? walked[local.device] : { day }; walked[local.device] = { ...w, app: Math.max(w.app || 0, local.walk.m || 0) }; }
+  for (const [dev, w] of Object.entries(walked)) {
+    const pid = fam?.me?.[dev];
+    if (pid && w?.day === day) meas[pid] = Math.max(meas[pid] || 0, w.app || 0, w.ot || 0);
+  }
+  const log = (fam?.log || []).filter((l) => today(l.t));
+  const car = fam?.car && today(fam.car.t) ? fam.car : null;
+  const res = people.map((p) => {
+    const pts = [];
+    for (const l of log) {
+      const ids = (l.ids || []).filter((id) => byId[id]);
+      if (!ids.length) continue;
+      const mine = l.who ? ids.find((id) => l.who[id]?.includes(p.id)) : ids.length > 1 ? ids.find((id) => canRide(p, byId[id])) : null;
+      const a = byId[mine || ids[0]]; // not on a ride of this entry: waiting at the meeting point (the first ride's exit)
+      pts.push({ t: l.t, lat: a.lat, lon: a.lon });
+    }
+    for (const ph of album) {
+      if (!today(ph.t) || !ph.near || firstName(ph.by) !== String(p.name || '').toLowerCase()) continue;
+      const q = ph.lat != null && ph.lon != null ? ph : PLACES.get(ph.near);
+      if (q?.lat != null) pts.push({ t: ph.t, lat: q.lat, lon: q.lon });
+    }
+    pts.sort((a, b) => a.t - b.t);
+    let est = 0;
+    if (pts.length) {
+      const route = [...(car ? [car] : []), ENTRANCE, ...pts, ...(ended ? [ENTRANCE, ...(car ? [car] : [])] : [])];
+      for (let i = 1; i < route.length; i++) est += metres(route[i - 1], route[i]);
+    }
+    const m = Math.round(Math.max(est, meas[p.id] || 0));
+    return { id: p.id, name: p.name, kind: p.kind, height: p.height, m, how: m && (meas[p.id] || 0) >= est ? 'gemeten' : 'geschat' };
+  });
+  // a child has no phone and takes no photos, but is always with an adult: at least the shortest adult walk
+  const adults = res.filter((x) => x.kind === 'adult' && x.m >= 100).map((x) => x.m);
+  for (const x of res) if (x.kind !== 'adult' && adults.length && Math.min(...adults) > x.m) { x.m = Math.min(...adults); x.how = 'geschat'; }
+  return res.filter((x) => x.m >= 100).sort((a, b) => b.m - a.m);
 }
 
 // the story slides, in order; each { kind, … } is drawn by wrapped.js
@@ -54,6 +115,7 @@ export function slidesFor(d) {
   if (d.toppers.done.length) s.push({ kind: 'toppers' });
   if (d.loved || d.most) s.push({ kind: 'loved' });
   if (d.queue.n) s.push({ kind: 'queue' });
+  if (d.walk?.length && d.walk[0].m >= 500) s.push({ kind: 'walk' });
   if (d.quiz.length) s.push({ kind: 'quiz' });
   if (d.photos.length) s.push({ kind: 'photos' });
   if (d.rides.length + d.photos.length >= 3) s.push({ kind: 'timeline' });
