@@ -486,7 +486,7 @@ async function photos(request, env, email, fam, id, what) {
     if (!(thumb instanceof File) || thumb.size === 0 || thumb.size >= 2e6) throw fail(400, 'bad photo');
     const old = prev ? JSON.parse(prev.meta) : null;
     if (old && old.full !== false) return json({ ok: true, id, t: (await env.DB.prepare('SELECT t FROM photos WHERE id = ?').bind(id).first())?.t, ...old }, 200); // original already here
-    await env.PHOTOS.put(`${fam}/${id}.t`, thumb.stream(), { httpMetadata: { contentType: 'image/jpeg' } });
+    await env.PHOTOS.put(`${fam}/${id}.t`, thumb, { httpMetadata: { contentType: 'image/jpeg' } });
     const t0 = Number.isFinite(+m.t) && +m.t > 1.6e12 && +m.t < Date.now() + 864e5 ? +m.t : Date.now();
     const meta0 = { by: email, size: Math.max(0, Math.round(+m.size) || 0), type: 'image/jpeg', full: false,
       w: Math.round(+m.w) || null, h: Math.round(+m.h) || null,
@@ -508,9 +508,9 @@ async function photos(request, env, email, fam, id, what) {
   const type = IMG_TYPES.includes(ft) ? ft : 'image/jpeg';
   const t = Number.isFinite(+m.t) && +m.t > 1.6e12 && +m.t < Date.now() + 864e5 ? +m.t : Date.now();
   const stamp = brusselsLocal(t).slice(0, 16).replace(/[-:]/g, '').replace('T', '-'); // 20261107-1432
-  await env.PHOTOS.put(`${fam}/${id}`, full.stream(), { httpMetadata: { contentType: type }, customMetadata: { stamp, by: email } });
+  await env.PHOTOS.put(`${fam}/${id}`, full, { httpMetadata: { contentType: type }, customMetadata: { stamp, by: email } });
   if (thumb instanceof File && thumb.size > 0 && thumb.size < 2e6) {
-    await env.PHOTOS.put(`${fam}/${id}.t`, thumb.stream(), { httpMetadata: { contentType: 'image/jpeg' } });
+    await env.PHOTOS.put(`${fam}/${id}.t`, thumb, { httpMetadata: { contentType: 'image/jpeg' } });
   }
   const meta = {
     by: email, size: full.size, type,
