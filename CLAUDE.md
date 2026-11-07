@@ -433,3 +433,14 @@ No accounts; knowing the family id is the access.
   badge < 12, toddler hint). Push rule 2c: 15–25 min before a show, once per show (`memo.show`), only with a fresh
   position in the park and no open queue, pref `shows` (Gezin › Meldingen). Deep link `/?shows=1`.
 - Next season: replace the dates/times in shows.js (they are for 2026 only; outside the season nothing is shown).
+
+## Lost camera photos (7 Nov, "Marjan's foto's zijn weg")
+- Server check: Marjan's 3 photos (and all of Pieter's originals after the PUT fix) are in D1 + R2; nothing in
+  photo_gone. She took more, which never left her phone. Likely cause: the phone closes the browser while the in-app
+  camera (`input[capture]`) is open (low memory, mostly Android), so Pretpark restarts and the photo never arrives.
+- Now: a click on a capture input sets `pp:camOpen`; a photo or a cancelled camera (6 s after returning) clears it;
+  finding it at the next start (≤ 20 min) → toast "Je gsm sloot Pretpark…", `camLost` counter, album tip (use the phone's
+  camera app + "🖼️ Uit galerij"), `diag('camera-lost')`. Every start also sends `diag('album-state')` (server count,
+  kept here, not online, refused, queue, memory, camera lost) so a phone's stuck photos can be seen from afar.
+- R2 listing: `npx cf r2 objects list --bucket-name pretpark-photos --cf-r2-jurisdiction eu --prefix <family>/` (20 per
+  page; filter by `--prefix <family>/<id>`).

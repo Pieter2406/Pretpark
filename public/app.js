@@ -67,6 +67,30 @@ async function sendDiag() {
   if (diagQ.length) diagTimer = setTimeout(sendDiag, 30e3);
 }
 addEventListener('pp-diag', (e) => diag(e.detail.kind, e.detail.msg));
+// A photo taken with the in-app camera can be lost when the phone closes the browser while the camera is open (low
+// memory; mostly Android): Pretpark then starts again and the photo never arrives. Remember that the camera was opened;
+// a cancelled camera clears it a few seconds after coming back; finding it at the next start means it happened.
+document.addEventListener('click', (e) => {
+  const inp = e.target.closest?.('label')?.querySelector('input[type=file][capture]') || (e.target.matches?.('input[type=file][capture]') ? e.target : null);
+  if (inp) store.set('camOpen', Date.now());
+}, true);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && store.get('camOpen', 0)) setTimeout(() => { if (Date.now() - store.get('camOpen', 0) > 4e3) store.set('camOpen', 0); }, 6e3);
+});
+function checkLostCamera() {
+  const t = store.get('camOpen', 0);
+  store.set('camOpen', 0);
+  if (!t || Date.now() - t > 20 * 60e3) return;
+  store.set('camLost', store.get('camLost', 0) + 1);
+  diag('camera-lost', `restart ${Math.round((Date.now() - t) / 1000)} s after the camera opened`);
+  setTimeout(() => toast('⚠️ Je gsm sloot Pretpark terwijl de camera open stond: die foto kwam niet aan. Neem foto’s liever met de camera-app van je gsm en voeg ze toe met 🖼️ Uit galerij (dan staan ze ook in je Foto’s).', null, 12000), 1500);
+}
+// what this phone still holds that isn't online (so a "lost" photo can be found from afar)
+function reportAlbumState(why) {
+  const onServer = new Set(S.album.filter((p) => p.full !== false).map((p) => p.id));
+  const kept = [...S.keep.values()];
+  diag('album-state', `${why}: server ${S.album.length} · kept here ${kept.length} (not original online ${kept.filter((k) => !onServer.has(k.id)).length}, refused ${kept.filter((k) => k.refused).length}) · queue ${S.queue.size} · memory ${S.mem.length} · camera lost ${store.get('camLost', 0)}`);
+}
 addEventListener('error', (e) => diag('js-error', `${e.message} @ ${String(e.filename).split('/').pop()}:${e.lineno}`));
 addEventListener('unhandledrejection', (e) => diag('js-reject', `${e.reason?.name || ''} ${e.reason?.message || e.reason}`));
 // people other phones chose. Nothing claimed yet → the first adult is preselected; otherwise nobody (a second phone may be
@@ -2217,6 +2241,7 @@ function renderAlbum() {
       <label class="filebtn solid"><input type="file" id="camIn" accept="image/*" capture="environment" hidden><span>📸 Foto nemen</span></label>
       <label class="filebtn"><input type="file" id="galIn" accept="image/*" multiple hidden><span>🖼️ Uit galerij</span></label>
     </div>
+    ${store.get('camLost', 0) ? '<p class="small upwait">💡 Je gsm sloot Pretpark al eens terwijl de camera open stond (die foto kwam niet aan). Veiliger: fotografeer met de camera-app van je gsm en voeg toe met 🖼️ Uit galerij.</p>' : ''}
     <p class="small muted">${items.length} foto’s · 📱 ${S.keep.size} staan op deze gsm${S.queue.size ? ` · ⏳ ${S.queue.size} ${S.queue.size === 1 ? 'gaat' : 'gaan'} nog online` : ''}${S.upMsg ? ` · ${esc(S.upMsg)}` : ''}. Originele kwaliteit, gedeeld met het gezin.</p>
     ${S.queue.size && !S.upMsg ? `<p class="small upwait">⏳ ${S.offline ? 'Wacht op bereik.' : 'Houd Pretpark even open (in de app, scherm aan), dan gaan ze online.'} Ze staan veilig op deze gsm.</p>` : ''}
     ${unsaved().length && navigator.canShare ? `<button class="ghost small" data-go="savephotos" style="width:100%">💾 Bewaar ${Math.min(10, unsaved().length)} ${unsaved().length > 10 ? `van ${unsaved().length} ` : ''}foto’s ook in je Foto’s-app</button>` : ''}
@@ -2783,7 +2808,7 @@ document.addEventListener('change', async (e) => {
     return;
   }
   if (id === 'tfile') { importTickets([...e.target.files]); return; }
-  if (id === 'camIn' || id === 'hdrCam') { const f = [...e.target.files]; e.target.value = ''; if (!$('#sheet').hidden && $('#sheet').contains(e.target)) closeSheet(); addPhotos(f, true); return; }
+  if (id === 'camIn' || id === 'hdrCam') { const f = [...e.target.files]; e.target.value = ''; store.set('camOpen', 0); if (!$('#sheet').hidden && $('#sheet').contains(e.target)) closeSheet(); addPhotos(f, true); return; }
   if (id === 'questIn' && e.target.files[0]) {
     const f = [...e.target.files]; e.target.value = ''; const quest = S.quest || '';
     store.set('questsDone', [...store.get('questsDone', []), quest].slice(-40)); S.questSkip = 0;
@@ -2862,7 +2887,7 @@ document.addEventListener('visibilitychange', () => {
 async function afterFamily() {
   recompute(); render();
   await loadLive();
-  flushOutbox(); syncTickets(); loadAlbum().then(processUploads); syncPushFamily();
+  flushOutbox(); syncTickets(); loadAlbum().then(processUploads).then(() => reportAlbumState('start')); syncPushFamily();
   renderChatBadge(); flushChat(); loadChat();
   // warm the offline cache with the ride photos (small, once per version)
   setTimeout(() => { for (const p of Object.values(PHOTOS)) fetch(`/img/rides/${p.fn}`).catch(() => {}); }, 4000);
@@ -2873,6 +2898,7 @@ async function afterFamily() {
     if (list.length) { S.outbox.unshift(...list); store.set('outbox', S.outbox); } store.set('inflight', null); } // the server de-dupes by aid
   applyTheme();
   render(); // first paint never waits for the phone's storage (iOS can leave IndexedDB hanging)
+  checkLostCamera();
   S.tickets = (await idb.all('tickets')) || [];
   await loadKeep();
   navigator.storage?.persist?.().catch(() => {});
