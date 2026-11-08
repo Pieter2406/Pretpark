@@ -97,6 +97,20 @@ export async function drawSlide(ctx, slide, i, d, assets) {
       break;
     }
     case 'loved': {
+      const faceOf = (r) => Object.values(r).map((v) => ({ 3: '😍', 2: '🙂', 1: '😬' }[v])).join(' ');
+      const photoFor = (a) => assets.ridePhoto(a) || (d.photos.find((p) => p.near === a.name) && assets.photo(d.photos.find((p) => p.near === a.name)));
+      if (d.favs?.length > 1) { // several rides with the best rating: one band each
+        text(ctx, 'Jullie favorieten', M, 230, { size: 80 });
+        const n = d.favs.length, top = 400, gap = 40, h = Math.min(420, (SLIDE.h - top - 220 - gap * (n - 1)) / n), pw = 440;
+        for (let k = 0; k < n; k++) {
+          const f = d.favs[k], y = top + k * (h + gap), img = await loadImg(photoFor(f.a));
+          if (img) cover(ctx, img, M, y, pw, h, 32);
+          else { ctx.save(); rr(ctx, M, y, pw, h, 32); ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fill(); ctx.restore(); text(ctx, f.a.icon, M + pw / 2, y + h / 2 - 90, { size: 180, align: 'center' }); }
+          const ty = text(ctx, f.a.name, M + pw + 40, y + 50, { size: 74, weight: 700, maxW: W - M - pw - 40 - M, maxLines: 2 });
+          text(ctx, faceOf(f.r), M + pw + 40, ty + 30, { size: 64 });
+        }
+        break;
+      }
       const a = d.loved?.a || d.most?.a;
       text(ctx, d.loved ? 'Jullie favoriet' : 'Deden jullie het vaakst', M, 260, { size: 70 });
       const img = await loadImg(assets.ridePhoto(a) || (d.photos.find((p) => p.near === a.name) && assets.photo(d.photos.find((p) => p.near === a.name))));
@@ -250,8 +264,9 @@ export async function drawPage(ctx, page, d, { style = 'klassiek', size = 'lands
         text(ctx, String(v), x, y, { size: vs * k, weight: 700, color: style === 'ibilaw' ? st.accent : st.ink, font: FONT });
         text(ctx, l, x, y + (vs + 24) * k, { size: (style === 'polaroid' ? 70 : 56) * k, weight: 500, color: st.muted, font: style === 'polaroid' ? HAND : FONT, maxW: cw - 30, maxLines: 2 });
       });
-      const fav = d.loved?.a || d.most?.a;
-      if (fav) text(ctx, `Favoriet: ${fav.icon} ${fav.name}`, M, H - M - 70 * k, { size: (style === 'polaroid' ? 76 : 60) * k, weight: 600, color: st.ink, font: style === 'polaroid' ? HAND : FONT });
+      const favs = d.favs?.length ? d.favs.map((f) => f.a) : d.most ? [d.most.a] : [];
+      if (favs.length) text(ctx, `${favs.length > 1 ? 'Favorieten' : 'Favoriet'}: ${favs.map((a) => `${a.icon} ${a.name}`).join(' · ')}`, M, H - M - 70 * k,
+        { size: (style === 'polaroid' ? 76 : 60) * k * (favs.length > 2 ? 0.85 : 1), weight: 600, color: st.ink, font: style === 'polaroid' ? HAND : FONT, maxW: W - 2 * M, maxLines: 1 });
       pageNo(); break;
     }
     case 'photos': {

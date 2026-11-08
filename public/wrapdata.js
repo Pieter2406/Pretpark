@@ -30,10 +30,15 @@ export function dayData({ fam, album = [], people = [], now = Date.now(), walk =
   const count = {};
   for (const r of rides) count[r.id] = (count[r.id] || 0) + 1;
   const most = Object.entries(count).sort((x, y) => y[1] - x[1])[0];
-  // the ride the family loved most (ratings: 3 😍, 2 🙂, 1 😬), ridden today
-  const loved = Object.entries(fam?.rates || {}).filter(([id]) => count[id])
-    .map(([id, r]) => ({ a: byId[id], avg: avg(Object.values(r)), n: Object.values(r).length, r }))
-    .filter((x) => x.a).sort((x, y) => y.avg - x.avg || y.n - x.n)[0] || null;
+  // the rides the family loved most (ratings: 3 😍, 2 🙂, 1 😬), ridden today: every ride with the best average (≥ 2.5),
+  // most ratings first, then in the order of the day; at most 3
+  const firstT = (id) => rides.find((r) => r.id === id)?.t || 0;
+  const rated = Object.entries(fam?.rates || {}).filter(([id]) => count[id])
+    .map(([id, r]) => ({ a: byId[id], avg: avg(Object.values(r)), n: Object.values(r).length, r, t: firstT(id) }))
+    .filter((x) => x.a);
+  const best = Math.max(0, ...rated.map((x) => x.avg));
+  const favs = best >= 2.5 ? rated.filter((x) => x.avg === best).sort((x, y) => y.n - x.n || x.t - y.t).slice(0, 3) : [];
+  const loved = favs[0] || null;
   const waits = (fam?.waits || []).filter((w) => today(w.t));
   const longest = waits.slice().sort((x, y) => y.m - x.m)[0];
   const wins = {}; for (const w of waits) if (w.win) wins[w.win] = (wins[w.win] || 0) + 1;
@@ -50,7 +55,7 @@ export function dayData({ fam, album = [], people = [], now = Date.now(), walk =
     rides, rideCount: rides.length, distinct: Object.keys(count).length,
     most: most && most[1] > 1 ? { a: byId[most[0]], n: most[1] } : null,
     toppers: { all: TOP, done: TOP.filter((n) => rides.some((r) => r.a.name === n)) },
-    loved: loved && loved.avg >= 2.5 ? loved : null,
+    loved, favs,
     queue: { min: Math.round(waits.reduce((s, w) => s + w.m, 0)), n: waits.length, longest: longest ? { a: byId[longest.id], m: Math.round(longest.m) } : null,
       posted: Math.round(waits.filter((w) => w.w != null).reduce((s, w) => s + w.w, 0)) },
     guesser: bestGuess ? { name: name(bestGuess[0]), wins: bestGuess[1] } : null,

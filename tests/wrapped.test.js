@@ -85,3 +85,11 @@ test('the day runs from the first to the last ride; the cover is a park photo', 
   assert.equal(d.first, NOW - 8 * 3600e3); assert.equal(d.last, NOW - 6 * 3600e3);
   assert.equal(bookPlan(d)[0].photo.id, 'ph0'); // not the car photo
 });
+
+test('favourites: every ride with the best rating (most ratings first, then the order of the day), at most 3', () => {
+  const rates = { [id('Calamity Mine')]: { p1: 3, p3: 3 }, [id('Kondaa')]: { p1: 3, p3: 3 }, [id('Fun Pilot')]: { p1: 3, p3: 2 } };
+  const d = dayData({ fam: { ...fam, rates }, album, people: DEFAULT_PEOPLE, now: NOW });
+  assert.deepEqual(d.favs.map((f) => f.a.name), ['Calamity Mine', 'Kondaa']); // Fun Pilot (2.5) is below the best
+  assert.equal(d.loved.a.name, 'Calamity Mine');
+  assert.deepEqual(dayData({ fam: { ...fam, rates: { [id('Kondaa')]: { p1: 2 } } }, album, people: DEFAULT_PEOPLE, now: NOW }).favs, []);
+});

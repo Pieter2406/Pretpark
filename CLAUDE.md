@@ -533,3 +533,7 @@ No accounts; knowing the family id is the access.
   prefer a starred photo, else a park photo (with a place). Stats label "eerste–laatste rit" (7 cells fit).
 - Real 7 Nov render (scratchpad real/render.js, the app's own code on the family's data + upright local copies of the
   45 originals): 10 slides, 44 photos, 13 rides, 3/7 toppers, 145 min queueing, 6,0–6,6 km; books of 22 pages.
+- Favourites: `d.favs` = every ride of the day with the best average rating (≥ 2.5), most ratings first, then the order
+  of the day, ≤ 3 (`d.loved` = the first). Slide "Jullie favorieten" (one band per ride) when > 1; the book's stats
+  page lists them. 8 Nov: the family's favourites are Vampire, Pulsar and Loup-Garou; Vampire had no rating, so
+  `rates` got {p1: 3, p3: 3} for it in D1 (Pieter and Louise rode it; the others may not).
