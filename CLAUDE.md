@@ -521,7 +521,7 @@ No accounts; knowing the family id is the access.
     first name = person name) → back once the day is over (`ended`: after closing / 23:00). Children: at least the
     shortest adult walk.
 - Wrapped: slide `walk` (≥ 500 m; "samen" when everyone has the same km; steps ≈ m / 0.72), a "km gestapt" cell on the
-  book's stats page. "Today" = the last 14 h like dayData; measured counts of the newest ride/photo's calendar day.
+  book's stats page. The day = `parkDay` (see below), for the estimate and the measured counts.
 - Tests: tests/walk.test.js; scratchpad walke2e.js (simulated GPS walk → tracker + server count; Chromium + WebKit).
 - 7 Nov (before this existed): estimate ≈ 6 km for everyone (lower bound: no detours, toilets, food).
 
