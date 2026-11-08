@@ -411,6 +411,12 @@ No accounts; knowing the family id is the access.
   and every 10 min; when the new worker is activated it reloads at once if `calmMoment()` (no sheet/guide/chat/pocket,
   nothing being typed, no upload/import running), else on the next return to the front. The very first install
   never reloads. Tested by changing VERSION under a live page (Chromium + WebKit).
+- 8 Nov ("Wrapped lijkt niet geüpdatet"): a cold start right after a deploy ran the cached old version, because the app
+  only looked for an update after 10 min or on a return to the front. Now `check()` also runs at start. `calmMoment()`
+  also requires the Wrapped, story, photo/ticket viewers, OwnTracks view and onboarding to be closed (no reload under
+  them); `closeDialog` loads a waiting version once the last dialog closes. The page asks its service worker for
+  `VERSION` (message `{type:'version'}` → `swVersion()`); Gezin shows "Versie <hash>" (+ "Herladen" when a new one is
+  ready) and `album-state` diag carries it. Test: scratchpad coldstart.js (Chromium + WebKit).
 
 ## Toppers first (7 Nov)
 - `COOL` in logic.js: tier 1 = headliners (Kondaa, Pulsar, Calamity Mine, Tiki-Waka, Loup-Garou, Challenge of

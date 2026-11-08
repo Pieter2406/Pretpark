@@ -46,7 +46,18 @@ const people = () => S.fam?.people || [];
 const meId = () => S.fam?.me?.[device] || null;
 // nothing in progress on screen: no dialog/sheet/guide/pocket open, no text being typed, no upload or import running
 const calmMoment = () => !document.hidden && !S.guide && !S.pocket && !S.chatOpen && $('#sheet')?.hidden !== false && !S.ticketBusy && !uploading
+  && ['#wrap', '#story', '#pview', '#tview', '#otview', '#onboard'].every((s) => $(s)?.hidden !== false)
   && !document.activeElement?.matches?.('input, textarea, select');
+// the version of the files this page runs (asked from the service worker that served it; '' without one)
+function swVersion() {
+  const c = navigator.serviceWorker?.controller;
+  if (!c) return Promise.resolve('');
+  return new Promise((res) => {
+    const ch = new MessageChannel(); ch.port1.onmessage = (e) => res(String(e.data || ''));
+    try { c.postMessage({ type: 'version' }, [ch.port2]); } catch { res(''); }
+    setTimeout(() => res(''), 1500);
+  });
+}
 // ---------- diagnostics: problems on this phone (photo uploads, storage, crashes) go to the server (/api/diag), so a
 // failure on someone's phone can be looked at from afar. Small, batched, at most one send per 10 s, same kind ≤ 1/min.
 const diagQ = [], diagSeen = new Map();
@@ -90,7 +101,7 @@ function checkLostCamera() {
 function reportAlbumState(why) {
   const onServer = new Set(S.album.filter((p) => p.full !== false).map((p) => p.id));
   const kept = [...S.keep.values()];
-  diag('album-state', `${why}: server ${S.album.length} · kept here ${kept.length} (not original online ${kept.filter((k) => !onServer.has(k.id)).length}, refused ${kept.filter((k) => k.refused).length}) · queue ${S.queue.size} · memory ${S.mem.length} · camera lost ${store.get('camLost', 0)}`);
+  diag('album-state', `${why}${S.ver ? ` (${S.ver})` : ''}: server ${S.album.length} · kept here ${kept.length} (not original online ${kept.filter((k) => !onServer.has(k.id)).length}, refused ${kept.filter((k) => k.refused).length}) · queue ${S.queue.size} · memory ${S.mem.length} · camera lost ${store.get('camLost', 0)}`);
 }
 addEventListener('error', (e) => diag('js-error', `${e.message} @ ${String(e.filename).split('/').pop()}:${e.lineno}`));
 addEventListener('unhandledrejection', (e) => diag('js-reject', `${e.reason?.name || ''} ${e.reason?.message || e.reason}`));
@@ -1287,7 +1298,8 @@ function renderFam() {
         return `<p class="small muted">${h.length ? `${rides} attractie${rides === 1 ? '' : 's'}${h.length > rides ? ` · ${h.length - rides} andere` : ''}. Verkeerd getikt? Verwijder het of pas de tijd aan.` : 'Nog niets. Tik op “Gedaan” na een attractie.'}</p>`; })()}
       <button class="primary" data-go="history" style="width:100%">📜 Bekijk en bewerk</button></div>
     <p class="muted small">Foto’s van attracties via Wikimedia Commons: ${[...new Set(Object.values(PHOTOS).map((p) => p.artist))].map(esc).join(', ')} (CC BY-SA 3.0/4.0, CC0, publiek domein; per foto vermeld).</p>
-    <p class="muted small">Wachttijden: ThemeParks.wiki (live). Weer: MET Norway. Kaart: © OpenStreetMap-bijdragers. Foto’s blijven bewaard tot je ze verwijdert.</p>`;
+    <p class="muted small">Wachttijden: ThemeParks.wiki (live). Weer: MET Norway. Kaart: © OpenStreetMap-bijdragers. Foto’s blijven bewaard tot je ze verwijdert.</p>
+    <p class="muted small">Versie ${esc(S.ver ? S.ver.replace('pretpark-', '') : 'onbekend')}${S.newVersion ? ' · ✨ nieuwe versie klaar: <button class="x" data-go="reload">Herladen</button>' : ''}</p>`;
   renderPush();
   renderLocCheck(); loadOtAll();
 }
@@ -1506,6 +1518,8 @@ function closeDialog(el) {
   if (i < 0) return;
   const [d] = dialogStack.splice(i, 1);
   if (!dialogStack.length) lockPage(false);
+  // a new version waited while this was open: load it now that nothing is open any more
+  if (S.newVersion && !dialogStack.length) setTimeout(() => { if (calmMoment()) location.reload(); }, 600);
   if (finePointer) d.back?.focus?.();
   // closed with a button or a swipe: drop our history entry too, so "back" later doesn't do nothing
   if (!d.noHistory && history.state?.pp === el.id) {
@@ -3137,7 +3151,7 @@ document.addEventListener('visibilitychange', () => {
 async function afterFamily() {
   recompute(); render();
   await loadLive();
-  flushOutbox(); syncTickets(); loadAlbum().then(processUploads).then(() => reportAlbumState('start')); syncPushFamily();
+  flushOutbox(); syncTickets(); swVersion().then((v) => { S.ver = v; }).then(loadAlbum).then(processUploads).then(() => reportAlbumState('start')); syncPushFamily();
   renderChatBadge(); flushChat(); loadChat();
   // warm the offline cache with the ride photos (small, once per version)
   setTimeout(() => { for (const p of Object.values(PHOTOS)) fetch(`/img/rides/${p.fn}`).catch(() => {}); }, 4000);
@@ -3179,6 +3193,7 @@ async function afterFamily() {
       S.swAt = Date.now();
       const check = () => { if (Date.now() - (S.swCheck || 0) > 60e3) { S.swCheck = Date.now(); reg.update().catch(() => {}); } };
       setInterval(check, 10 * 60e3);
+      check(); // also at start: a home-screen app cold-starts on the cached version and iOS seldom checks by itself
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) { S.hiddenAt = Date.now(); return; }
         if (S.newVersion && Date.now() - (S.hiddenAt || 0) > 2e3) { location.reload(); return; } // back from elsewhere

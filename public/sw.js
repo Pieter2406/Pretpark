@@ -12,6 +12,8 @@ const SHELL = [
   '/park.json', '/icon.svg', '/apple-touch-icon.png', '/manifest.webmanifest', '/photos.js', '/fun.js', '/activity.js', '/compat.js', '/shows.js', '/wrapdata.js', '/wrapped.js', '/exif.js',
 ];
 
+// the page asks which version served it (shown under Gezin and in the diagnostics)
+self.addEventListener('message', (e) => { if (e.data?.type === 'version') e.ports?.[0]?.postMessage(VERSION); });
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(VERSION);
