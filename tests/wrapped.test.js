@@ -46,7 +46,7 @@ test('photo book: moments of ≤ 4, a starred photo alone, layouts by count', ()
   const pages = bookPlan(dayData({ fam, album, people: DEFAULT_PEOPLE, now: NOW }));
   assert.equal(pages[0].kind, 'cover'); assert.equal(pages[0].photo.id, 'ph70'); // the starred photo is the cover
   const ph = pages.filter((p) => p.kind === 'photos');
-  assert.deepEqual(ph.map((p) => [p.layout, p.photos.length]), [['trio', 3], ['hero', 1], ['duo', 2], ['quad', 4], ['hero', 1]]);
+  assert.deepEqual(ph.map((p) => [p.layout, p.photos.length]), [['trio', 3], ['hero', 1], ['duo', 2], ['trio', 3], ['duo', 2]]);
   assert.equal(ph[0].title, 'Calamity Mine');
   assert.equal(pages.at(-1).kind, 'end'); assert.ok(pages.some((p) => p.kind === 'timeline'));
   // every photo exactly once
@@ -92,4 +92,16 @@ test('favourites: every ride with the best rating (most ratings first, then the 
   assert.deepEqual(d.favs.map((f) => f.a.name), ['Calamity Mine', 'Kondaa']); // Fun Pilot (2.5) is below the best
   assert.equal(d.loved.a.name, 'Calamity Mine');
   assert.deepEqual(dayData({ fam: { ...fam, rates: { [id('Kondaa')]: { p1: 2 } } }, album, people: DEFAULT_PEOPLE, now: NOW }).favs, []);
+});
+
+test('photo book: one place per page, also when photos elsewhere were taken in between', () => {
+  const T = NOW - 3 * 3600e3, m = 60e3;
+  const ph = (id, min, near) => ({ id, t: T + min * m, near });
+  const day = [ph('a1', 0, 'Aquarium (spookhuis)'), ph('m1', 2, 'Mini Tour'), ph('p1', 9, 'Psycho Circus (scare zone)'), ph('a2', 19, 'Aquarium (spookhuis)'),
+    ph('m2', 20, 'Mini Tour'), ph('x1', 25, ''), ph('x2', 30, ''), ph('a3', 90, 'Aquarium (spookhuis)'), ph('x3', 80, '')].sort((x, y) => x.t - y.t);
+  const pages = bookPlan(dayData({ fam, album: day, people: DEFAULT_PEOPLE, now: NOW })).filter((p) => p.kind === 'photos');
+  assert.deepEqual(pages.map((p) => [p.title, p.photos.map((x) => x.id).join(',')]), [
+    ['Aquarium (spookhuis)', 'a1,a2'], ['Mini Tour', 'm1,m2'], ['Psycho Circus (scare zone)', 'p1'], ['', 'x1,x2'],
+    ['', 'x3'], ['Aquarium (spookhuis)', 'a3'], // 70 min later: a new visit
+  ]);
 });

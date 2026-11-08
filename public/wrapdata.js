@@ -148,16 +148,24 @@ export function bookPlan(d) {
   // cover: a starred photo, else the first one taken in the park (with a place; not the car or home), else any
   const pages = [{ kind: 'cover', photo: d.starred[0] || d.photos.find((p) => p.near && p.full !== false) || d.photos.find((p) => p.full !== false) || d.photos[0] || null }];
   if (d.rideCount || d.photos.length) pages.push({ kind: 'stats' });
-  let cur = [];
-  const flush = () => { if (cur.length) pages.push({ kind: 'photos', layout: LAYOUT[cur.length], photos: cur, title: titleOf(cur) }); cur = []; };
+  // one place per page: a photo joins the latest group of the same place when it was taken ≤ 45 min after that group's
+  // last photo (also when someone took photos elsewhere in between); photos without a place only group with each
+  // other (≤ 20 min). A starred photo gets a page of its own. Groups keep the order of their first photo.
+  const groups = [];
   for (const p of d.photos) {
-    if (p.star) { flush(); pages.push({ kind: 'photos', layout: 'hero', photos: [p], title: titleOf([p]) }); continue; }
-    const last = cur.at(-1);
-    const sameMoment = last && ((p.near && p.near === last.near) || p.t - last.t < 20 * 60e3);
-    if (cur.length && (!sameMoment || cur.length >= 4)) flush();
-    cur.push(p);
+    if (p.star) { groups.push({ star: true, photos: [p] }); continue; }
+    const key = p.near || '';
+    const g = groups.findLast((x) => !x.star && x.key === key && p.t - x.photos.at(-1).t <= (key ? 45 : 20) * 60e3);
+    if (g) g.photos.push(p); else groups.push({ key, photos: [p] });
   }
-  flush();
+  for (const g of groups) {
+    // more than 4: pages as even as possible (5 → 3 + 2, not 4 + 1)
+    const n = Math.ceil(g.photos.length / 4), size = Math.ceil(g.photos.length / n);
+    for (let i = 0; i < g.photos.length; i += size) {
+      const ps = g.photos.slice(i, i + size);
+      pages.push({ kind: 'photos', layout: LAYOUT[ps.length], photos: ps, title: titleOf(ps) });
+    }
+  }
   if (d.rides.length >= 2) pages.push({ kind: 'timeline' });
   pages.push({ kind: 'end' });
   return pages;

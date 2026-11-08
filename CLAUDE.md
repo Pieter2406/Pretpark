@@ -468,7 +468,7 @@ No accounts; knowing the family id is the access.
 - `public/wrapdata.js` (pure, tests/wrapped.test.js): `dayData` (today's rides, distinct, toppers done of the COOL tier 1,
   loved ride from ratings, most-ridden, queue minutes/longest/best guesser, quiz, photos, starred), `slidesFor` (only
   slides with something to say: intro, rides, toppers, loved, queue, quiz, photos, timeline, outro), `bookPlan` (cover =
-  first starred photo; stats; photo pages = moments of ≤ 4 photos (same ride or < 20 min apart), a starred photo gets its
+  first starred photo; stats; photo pages = ≤ 4 photos of one place (see "Book pages" below), a starred photo gets its
   own page; timeline; end), `makePdf` (minimal PDF 1.4, one full-page DCTDecode JPEG per page; checked with pdfinfo and
   pypdf strict).
 - `public/wrapped.js` (canvas): `drawSlide` (1080×1920, gradient per slide) and `drawPage` in 3 styles (klassiek / polaroid
@@ -537,3 +537,7 @@ No accounts; knowing the family id is the access.
   of the day, ≤ 3 (`d.loved` = the first). Slide "Jullie favorieten" (one band per ride) when > 1; the book's stats
   page lists them. 8 Nov: the family's favourites are Vampire, Pulsar and Loup-Garou; Vampire had no rating, so
   `rates` got {p1: 3, p3: 3} for it in D1 (Pieter and Louise rode it; the others may not).
+- Book pages: one place per page (8 Nov; a "20 min" moment mixed places under the first photo's title, e.g. Fun World
+  photos on the Aquarium page). A photo joins the latest group of the same `near` when ≤ 45 min after its last photo
+  (also with photos elsewhere in between); photos without a place only group with each other (≤ 20 min); > 4 photos
+  are split evenly (5 → 3 + 2); starred = own page. Real day: 31 pages.
