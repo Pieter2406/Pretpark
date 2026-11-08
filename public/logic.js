@@ -144,8 +144,9 @@ export const TUNE = { urgency: 4, waitWeight: 1, cool: 1 };
 // The park's toppers: worth more than their category alone says (tier 1 = the headliners people come for, tier 2 =
 // strong rides). A ride's value × coolOf(a) = 1 + TUNE.cool × (1 | 0.5); tuned with sim/simulate.mjs.
 export const COOL = {
-  Kondaa: 1, Pulsar: 1, 'Calamity Mine': 1, 'Tiki-Waka': 1, 'Loup-Garou': 1, 'Challenge of Tutankhamon': 1, 'Popcorn Revenge': 1,
-  Vampire: 2, Turbine: 2, Cobra: 2, 'Dalton Terror': 2, Mecalodon: 2, Buzzsaw: 2, 'Radja River': 2, Kondaala: 2, 'Fun Pilot': 2,
+  // Vampire is tier 1 and Popcorn Revenge tier 2 by the family's own verdict (8 Nov: Vampire, Pulsar and Loup-Garou)
+  Kondaa: 1, Pulsar: 1, 'Calamity Mine': 1, 'Tiki-Waka': 1, 'Loup-Garou': 1, 'Challenge of Tutankhamon': 1, Vampire: 1,
+  'Popcorn Revenge': 2, Turbine: 2, Cobra: 2, 'Dalton Terror': 2, Mecalodon: 2, Buzzsaw: 2, 'Radja River': 2, Kondaala: 2, 'Fun Pilot': 2,
 };
 export const coolOf = (a) => 1 + TUNE.cool * ({ 1: 1, 2: 0.5 }[COOL[a?.name]] || 0);
 // park time in minutes since midnight, from /api/live (localTime is Brussels wall-clock written as UTC)

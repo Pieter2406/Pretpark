@@ -420,8 +420,9 @@ No accounts; knowing the family id is the access.
 
 ## Toppers first (7 Nov)
 - `COOL` in logic.js: tier 1 = headliners (Kondaa, Pulsar, Calamity Mine, Tiki-Waka, Loup-Garou, Challenge of
-  Tutankhamon, Popcorn Revenge), tier 2 = strong rides (Vampire, Turbine, Cobra, Dalton Terror, Mecalodon, Buzzsaw,
-  Radja River, Kondaala, Fun Pilot). Value × `coolOf(a)` = 1 + `TUNE.cool` × (1 | 0.5), `TUNE.cool = 1`. Ride sheet shows
+  Tutankhamon, Vampire), tier 2 = strong rides (Popcorn Revenge, Turbine, Cobra, Dalton Terror, Mecalodon, Buzzsaw,
+  Radja River, Kondaala, Fun Pilot). 8 Nov: Vampire and Popcorn Revenge swapped tiers at the family's request (their top 3
+  was Vampire, Pulsar, Loup-Garou); this also feeds the Wrapped's "De grote toppers" slide (tier 1). Value × `coolOf(a)` = 1 + `TUNE.cool` × (1 | 0.5), `TUNE.cool = 1`. Ride sheet shows
   "🔥 Topper" / "🔥 Aanrader". Sim (20 days; normal / busy / breakdowns / flat): different headliners per day 4.3 → 6.1,
   person-rides on toppers +27–34%, rides per person −1.5 (−5%), +15 min queueing, +0.4 km; pregnant adult and toddler
   ≈ unchanged. 0.6 was the milder option (+18–27% toppers, −0.6 rides). The sim reports `coolRides` / `cool1`.
