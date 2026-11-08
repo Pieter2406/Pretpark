@@ -73,7 +73,7 @@ export async function drawSlide(ctx, slide, i, d, assets) {
   const big = (n, y, sub) => { text(ctx, String(n), M, y, { size: 300, weight: 700 }); if (sub) text(ctx, sub, M, y + 320, { size: 70, weight: 600, maxW: W - 2 * M }); };
   switch (slide.kind) {
     case 'intro': {
-      const p = d.starred[0] || d.photos.at(-1);
+      const p = d.starred[0] || d.photos.filter((x) => x.near).at(-1) || d.photos.at(-1); // a park photo, not the one from home
       const img = p ? await loadImg(assets.photo(p)) : null;
       if (img) { ctx.save(); ctx.translate(W / 2, 760); ctx.rotate(-0.04); ctx.fillStyle = '#fff'; ctx.fillRect(-400, -460, 800, 960); cover(ctx, img, -370, -430, 740, 800, 8); ctx.restore(); }
       text(ctx, 'Onze dag in Walibi', M, img ? 1330 : 520, { size: 104, weight: 700, maxW: W - 2 * M });
@@ -242,7 +242,7 @@ export async function drawPage(ctx, page, d, { style = 'klassiek', size = 'lands
       text(ctx, 'Onze dag in cijfers', M, M, { size: (style === 'polaroid' ? 120 : 92) * k, weight: 600, font: st.title, color: style === 'ibilaw' ? st.accent : st.ink });
       const cells = [[d.rideCount, d.rideCount === 1 ? 'ritje' : 'ritjes'], [d.distinct, 'attracties'], [d.photos.length, 'foto’s'], [`${d.toppers.done.length}/${d.toppers.all.length}`, 'toppers'],
         ...(d.queue.n ? [[d.queue.min, 'minuten in de rij']] : []),
-        ...(d.walk?.length && d.walk[0].m >= 500 ? [[`${(d.walk[0].m / 1000).toLocaleString('nl-BE', { maximumFractionDigits: 1 })} km`, d.walk.length > 1 && d.walk.every((x) => Math.round(x.m / 100) === Math.round(d.walk[0].m / 100)) ? 'gestapt, samen' : `gestapt (${d.walk[0].name})`]] : []), ...(d.first ? [[`${hhmm(d.first)}–${hhmm(d.last)}`, 'van eerste tot laatste rit']] : [])];
+        ...(d.walk?.length && d.walk[0].m >= 500 ? [[`${(d.walk[0].m / 1000).toLocaleString('nl-BE', { maximumFractionDigits: 1 })} km`, d.walk.length > 1 && d.walk.every((x) => Math.round(x.m / 100) === Math.round(d.walk[0].m / 100)) ? 'gestapt, samen' : `gestapt (${d.walk[0].name})`]] : []), ...(d.first ? [[`${hhmm(d.first)}–${hhmm(d.last)}`, 'eerste–laatste rit']] : [])];
       const cols = W > H ? 3 : 2, cw = (W - 2 * M) / cols, top = M + 230 * k, rowH = (H - top - M - 110 * k) / Math.ceil(cells.length / cols);
       cells.forEach(([v, l], c) => {
         const x = M + (c % cols) * cw, y = top + Math.floor(c / cols) * rowH;

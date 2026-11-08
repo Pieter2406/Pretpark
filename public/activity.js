@@ -113,8 +113,10 @@ export function addFix(tr, fix, now) {
 // car). After a gap (app closed, no OwnTracks) the straight line × 1.3, as paths aren't straight. A new day (Brussels)
 // starts at 0. tr.walk = { day: 'YYYY-MM-DD', m, at: last counted point, last: last position }
 export const WALK = { minMove: 15, maxSpeed: 2.5, gap: 120e3, detour: 1.3 };
+let dayFmt = null;
 export function dayKey(t) {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Brussels', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(t).map((x) => [x.type, x.value]));
+  dayFmt ||= new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Brussels', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const p = Object.fromEntries(dayFmt.formatToParts(t).map((x) => [x.type, x.value]));
   return `${p.year}-${p.month}-${p.day}`;
 }
 export function walkAdd(tr, pos) {

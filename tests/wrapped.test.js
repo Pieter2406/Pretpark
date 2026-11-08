@@ -68,3 +68,20 @@ test('makePdf: a valid PDF with one full-page JPEG per page', () => {
   let info = null; try { info = execFileSync('pdfinfo', [f], { encoding: 'utf8' }); } catch { /* not installed */ }
   if (info) { assert.match(info, /Pages:\s+2/); assert.match(info, /Page size:\s+842 x 595/); }
 });
+
+test('the Wrapped is about the whole last park day, also the morning after', () => {
+  const next = Date.UTC(2026, 10, 8, 8, 0); // 09:00 the next day: the morning rides are > 14 h ago
+  const d = dayData({ fam, album, people: DEFAULT_PEOPLE, now: next });
+  assert.equal(d.day, '2026-11-07'); assert.equal(d.past, true);
+  assert.equal(d.rideCount, 4); assert.equal(d.photos.length, 11); // the ride of the day before stays out
+  // a week later: still that day; after a week: nothing
+  assert.equal(dayData({ fam, album, people: DEFAULT_PEOPLE, now: NOW + 6 * 86400e3 }).rideCount, 4);
+  assert.equal(dayData({ fam, album, people: DEFAULT_PEOPLE, now: NOW + 8 * 86400e3 }).rideCount, 0);
+});
+
+test('the day runs from the first to the last ride; the cover is a park photo', () => {
+  const extra = [{ id: 'car', t: NOW - 9 * 3600e3, near: '' }, { id: 'home', t: NOW + 2 * 3600e3 - 1, near: '' }, ...album.map((p) => ({ ...p, star: false }))];
+  const d = dayData({ fam, album: extra, people: DEFAULT_PEOPLE, now: NOW + 2 * 3600e3 });
+  assert.equal(d.first, NOW - 8 * 3600e3); assert.equal(d.last, NOW - 6 * 3600e3);
+  assert.equal(bookPlan(d)[0].photo.id, 'ph0'); // not the car photo
+});

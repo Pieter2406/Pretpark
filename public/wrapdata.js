@@ -10,14 +10,21 @@ import { SPOOKY } from './shows.js';
 import { spotLabel } from './exif.js';
 import { dayKey } from './activity.js';
 
-const DAY = 14 * 3600e3;
+// The day a Wrapped is about: the park day of the newest ride done in the last week (Brussels calendar day), so it
+// still shows the whole day the morning after (or a week later), and only that day.
+const WEEK = 7 * 86400e3;
+export function parkDay(fam, now = Date.now()) {
+  const ts = (fam?.log || []).map((l) => l.t).filter((t) => t && t <= now + 60e3 && now - t < WEEK);
+  return dayKey(ts.length ? Math.max(...ts) : now);
+}
+const onDay = (day, now) => (t) => !!t && t <= now + 60e3 && now - t < WEEK + 86400e3 && dayKey(t) === day;
 const TOP = Object.entries(COOL).filter(([, t]) => t === 1).map(([n]) => n);
 const avg = (xs) => xs.reduce((s, x) => s + x, 0) / (xs.length || 1);
 
 // fam: the family state; album: [{id, t, near, star, caption, by, w, h, full}]; people: [{id, name, …}]
 // walk: the extra inputs of walkStats ({ metres, local, ended }), optional
 export function dayData({ fam, album = [], people = [], now = Date.now(), walk = {} }) {
-  const today = (t) => t && now - t < DAY && t <= now + 60e3;
+  const day = parkDay(fam, now), today = onDay(day, now);
   const rides = (fam?.log || []).filter((l) => today(l.t)).flatMap((l) => (l.ids || []).map((id) => ({ t: l.t, id, a: byId[id] })))
     .filter((r) => r.a && r.a.cat).sort((x, y) => x.t - y.t);
   const count = {};
@@ -35,7 +42,8 @@ export function dayData({ fam, album = [], people = [], now = Date.now(), walk =
   const quiz = Object.entries(fam?.quiz || {}).map(([pid, q]) => ({ name: name(pid), pts: q.pts, n: q.n })).filter((x) => x.name && x.n).sort((x, y) => y.pts - x.pts || x.n - y.n);
   const photos = album.filter((p) => today(p.t)).sort((x, y) => x.t - y.t);
   const hist = (fam?.hist || []).filter((h) => today(h.t));
-  const all = [...rides.map((r) => r.t), ...photos.map((p) => p.t)];
+  // the day runs from the first to the last ride (photos in the car or at home don't stretch it); photos only without rides
+  const all = rides.length ? rides.map((r) => r.t) : photos.map((p) => p.t);
   return {
     now, first: all.length ? Math.min(...all) : null, last: all.length ? Math.max(...all) : null,
     people: people.map((p) => ({ id: p.id, name: p.name, kind: p.kind, height: p.height })),
@@ -49,6 +57,7 @@ export function dayData({ fam, album = [], people = [], now = Date.now(), walk =
     quiz,
     photos, starred: photos.filter((p) => p.star),
     meals: hist.filter((h) => h.k === 'ate').length, pauses: hist.filter((h) => h.k === 'pause').length,
+    day, past: day < dayKey(now),
     walk: walkStats({ fam, people, album, now, ...walk }),
   };
 }
@@ -65,11 +74,9 @@ const PLACES = new Map([...ATTRACTIONS.map((a) => [a.name, a]), ...FOOD.map((f) 
 const firstName = (email) => String(email || '').split('@')[0].split(/[._]/)[0].toLowerCase();
 const straight = (a, b) => distM(a, b) * 1.3;
 export function walkStats({ fam, people = [], album = [], now = Date.now(), metres = straight, local = null, ended = false }) {
-  // "today" as in dayData (the last 14 h: a Wrapped opened after midnight still shows the evening); the measured
-  // counts are those of the calendar day of the newest ride or photo
-  const today = (t) => t && now - t < DAY && t <= now + 60e3;
-  const latest = Math.max(0, ...(fam?.log || []).map((l) => l.t).filter(today), ...album.map((p) => p.t).filter(today));
-  const day = dayKey(latest || now);
+  // the same day as dayData (parkDay); a day that is already over always ends at the exit/car
+  const day = parkDay(fam, now), today = onDay(day, now);
+  if (day < dayKey(now)) ended = true;
   const meas = {};
   const walked = { ...(fam?.walked || {}) };
   if (local?.device && local.walk?.day === day) { const w = walked[local.device]?.day === day ? walked[local.device] : { day }; walked[local.device] = { ...w, app: Math.max(w.app || 0, local.walk.m || 0) }; }
@@ -133,7 +140,8 @@ export const BOOK_STYLES = [
 export const BOOK_SIZES = { landscape: { w: 2000, h: 1414, pw: 842, ph: 595, name: 'A4 liggend' }, square: { w: 1800, h: 1800, pw: 595, ph: 595, name: 'Vierkant 21 cm' } };
 const LAYOUT = ['', 'hero', 'duo', 'trio', 'quad'];
 export function bookPlan(d) {
-  const pages = [{ kind: 'cover', photo: d.starred[0] || d.photos.find((p) => p.full !== false) || d.photos[0] || null }];
+  // cover: a starred photo, else the first one taken in the park (with a place; not the car or home), else any
+  const pages = [{ kind: 'cover', photo: d.starred[0] || d.photos.find((p) => p.near && p.full !== false) || d.photos.find((p) => p.full !== false) || d.photos[0] || null }];
   if (d.rideCount || d.photos.length) pages.push({ kind: 'stats' });
   let cur = [];
   const flush = () => { if (cur.length) pages.push({ kind: 'photos', layout: LAYOUT[cur.length], photos: cur, title: titleOf(cur) }); cur = []; };

@@ -524,3 +524,12 @@ No accounts; knowing the family id is the access.
   book's stats page. "Today" = the last 14 h like dayData; measured counts of the newest ride/photo's calendar day.
 - Tests: tests/walk.test.js; scratchpad walke2e.js (simulated GPS walk → tracker + server count; Chromium + WebKit).
 - 7 Nov (before this existed): estimate ≈ 6 km for everyone (lower bound: no detours, toilets, food).
+
+## The Wrapped is about the last park day (8 Nov)
+- The morning after, the 14-h window had dropped most of 7 Nov. Now wrapdata.js `parkDay(fam, now)` = the Brussels
+  calendar day of the newest ride in the last 7 days; dayData/walkStats take everything of that day (`d.day`, `d.past`;
+  a past day always counts the walk back). Nu's "🎁" button also shows the morning after (≤ 24 h after the last ride).
+- `d.first`/`d.last` = first/last ride (car and home photos don't stretch the day); the intro photo and the book cover
+  prefer a starred photo, else a park photo (with a place). Stats label "eerste–laatste rit" (7 cells fit).
+- Real 7 Nov render (scratchpad real/render.js, the app's own code on the family's data + upright local copies of the
+  45 originals): 10 slides, 44 photos, 13 rides, 3/7 toppers, 145 min queueing, 6,0–6,6 km; books of 22 pages.

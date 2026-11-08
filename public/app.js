@@ -519,10 +519,11 @@ function showGo(id) {
 // ---------- Wrapped of the day (stories) + photo book (PDF): wrapdata.js (pure) + wrapped.js (canvas), loaded lazily
 // Evening card on Nu: from 17:30, or once the park is closed, when something happened today
 function wrapTime() {
-  const done = (S.fam?.log || []).some((l) => Date.now() - l.t < 14 * 3600e3);
-  if (!done) return false;
+  const last = Math.max(0, ...(S.fam?.log || []).map((l) => l.t).filter((t) => t <= Date.now() + 60e3));
+  if (Date.now() - last > 24 * 3600e3) return false;
   const d = new Date();
-  return d.getHours() * 60 + d.getMinutes() >= 17 * 60 + 30 || (S.live?.close && Date.now() > S.live.close);
+  // in the evening, after closing, or the morning after (the park day is over)
+  return d.getHours() * 60 + d.getMinutes() >= 17 * 60 + 30 || (S.live?.close && Date.now() > S.live.close) || new Date(last).toDateString() !== d.toDateString();
 }
 const W = { i: 0, slides: [], d: null, timer: null, mod: null, data: null, busy: false };
 async function wrapMods() {
